@@ -13,9 +13,31 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+## Data description
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+The data file production_data.csv contain 400 observations on 8 variables. 6 of 
+the variables are synthetic production rate of 10Be for the last 8000 years from 
+different regions of the globe. These regional synthetic production rate are 
+based on a production model that can simulate theoretical production rate at 
+each latitude and height (km). We generate the production rate and combine them 
+(summation) into different regions. Therefore, correlation are expected between 
+neighboring regions. Beside regional correlation, there are also time 
+autocorrelation in the data set.
+
+## Variable description
+age           time before 1950 [years]
+Q_trop_high   10Be production rate in the troposphere at high latitude (60-90°) [atoms/cm2/s]
+Q_trop_mid    10Be production rate in the troposphere at mid latitude (30-60°) [atoms/cm2/s]
+Q_trop_low    10Be production rate in the troposphere at low latitude (0-30°) [atoms/cm2/s]
+Q_stra_high   10Be production rate in the stratosphere at high latitude (60-90°) [atoms/cm2/s]
+Q_stra_mid    10Be production rate in the stratosphere at mid latitude (30-60°) [atoms/cm2/s]
+Q_stra_low    10Be production rate in the stratosphere at low latitude (0-30°) [atoms/cm2/s]
+EDML          10Be flux [10^6 atoms/cm2/year] to Antarctica measured at the EDML ice core [normalized]
+GRIP          10Be flux [10^6 atoms/cm2/year] to Greenland measured at the GRIP ice core [normalized]
+
+The variables EDML and GRIP (10Be flux) were normalized to have the same mean as the sum of 10Be production rate from all the regions over the last 8000 years.
+The goal is to analyse how much each region contributes to the 10Be fluxes to either Greenland or Antarctica
+
 
 When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
 
