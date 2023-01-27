@@ -9,48 +9,356 @@ output:
     theme: flatly
 ---
 
-```{r setup, include=FALSE}
+```{r setup, message=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+#install.packages("corrgram")
+library(tidyverse)
+library(corrgram) # visualisation of correlations
+library(lmtest)  # more linear regression tools
+library(naniar) # missing data analysis
+library(tsibble) # time series tibbles
+library(fable) # tsibble-based forecasting
+library(fabletools) #data structures for fable
+library(feasts) # feature extraction for time series
+library(hrbrthemes) #ggplot styling
+
+ggplot2::theme_set(hrbrthemes::theme_ipsum_rc())
 ```
 
 ## Data description
 
-The data file production_data.csv contain 400 observations on 8 variables. 6 of 
-the variables are synthetic production rate of 10Be for the last 8000 years from 
-different regions of the globe. These regional synthetic production rate are 
-based on a production model that can simulate theoretical production rate at 
-each latitude and height (km). We generate the production rate and combine them 
-(summation) into different regions. Therefore, correlation are expected between 
-neighboring regions. Beside regional correlation, there are also time 
-autocorrelation in the data set.
+The data file production_data.csv contain 400 observations on 8 variables. 6 of the variables are synthetic production rate of 10Be for the last 8000 years from different regions of the globe. These regional synthetic production rate are based on a production model that can simulate theoretical production rate at each latitude and height (km). We generate the production rate and combine them (summation) into different regions. Therefore, correlation are expected between neighboring regions. Beside the regional correlation, there are also time autocorrelation in the dataset.
 
 ## Variable description
-age           time before 1950 [years]
-Q_trop_high   10Be production rate in the troposphere at high latitude (60-90°) [atoms/cm2/s]
-Q_trop_mid    10Be production rate in the troposphere at mid latitude (30-60°) [atoms/cm2/s]
-Q_trop_low    10Be production rate in the troposphere at low latitude (0-30°) [atoms/cm2/s]
-Q_stra_high   10Be production rate in the stratosphere at high latitude (60-90°) [atoms/cm2/s]
-Q_stra_mid    10Be production rate in the stratosphere at mid latitude (30-60°) [atoms/cm2/s]
-Q_stra_low    10Be production rate in the stratosphere at low latitude (0-30°) [atoms/cm2/s]
-EDML          10Be flux [10^6 atoms/cm2/year] to Antarctica measured at the EDML ice core [normalized]
-GRIP          10Be flux [10^6 atoms/cm2/year] to Greenland measured at the GRIP ice core [normalized]
+
+|variable| description|
+|--|--|
+|age|time before 1950 [years]|
+|Q_trop_high |   10Be production rate in the troposphere at high latitude (60-90°) [atoms/cm2/s]|
+|Q_trop_mid |   10Be production rate in the troposphere at mid latitude (30-60°) [atoms/cm2/s]|
+|Q_trop_low |   10Be production rate in the troposphere at low latitude (0-30°) [atoms/cm2/s]|
+|Q_stra_high |  10Be production rate in the stratosphere at high latitude (60-90°) [atoms/cm2/s]|
+|Q_stra_mid  |  10Be production rate in the stratosphere at mid latitude (30-60°) [atoms/cm2/s]|
+|Q_stra_low  |  10Be production rate in the stratosphere at low latitude (0-30°) [atoms/cm2/s]|
+|EDML        |  10Be flux [10^6 atoms/cm2/year] to Antarctica measured at the EDML ice core [normalized]|
+|GRIP        |  10Be flux [10^6 atoms/cm2/year] to Greenland measured at the GRIP ice core [normalized]|
 
 The variables EDML and GRIP (10Be flux) were normalized to have the same mean as the sum of 10Be production rate from all the regions over the last 8000 years.
-The goal is to analyse how much each region contributes to the 10Be fluxes to either Greenland or Antarctica
+The goal is to analyse how much each region contributes to the 10Be fluxes to either Greenland or Antarctica.
 
+# Exploratory Data Analysis
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+## Correlation structure
 
-```{r cars}
-summary(cars)
+First we load the data and look at it.
+
+```{r}
+icecore <- read_csv("data/production_data.csv", show_col_types = FALSE)
+head(icecore)
 ```
 
-## Including Plots
+Lets explore the correlation structure among the covariates.
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r}
+# removing ID variable and the dependent variables for now
+varnames<- setdiff(names(icecore), c("age", "EDML", "GRIP"))
+corrgram::corrgram(icecore[,varnames], order="PCA",
+         main="Correlogram for the icecore data",
+         lower.panel=panel.ellipse, upper.panel=panel.pie,
+         diag.panel=panel.minmax, text.panel=panel.txt)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+All independent variables are strongly correlated between themselves. Reordering by PCA identifies the groupings which make sense (by latitude).
+
+## Missing values
+
+There's some missingness in the data. Let's have a look
+
+```{r, message=FALSE, warning=FALSE}
+naniar::vis_miss(icecore)
+```
+
+The missingness is present only in the response variables EDML and GRIP and only the fist few observations, i.e. it is missing not-at-random.
+
+## Time aspect
+
+We will take somewhat closer look at the time series aspect of the data. First of all, since this is the geology-related data, the age is measured backwards, which means that age=0 is actually the last (most recent) observation. Is the age equally spaced? Yes, it is equi-spaced by 20 years.
+
+```{r}
+unique(diff(icecore$age))
+```
+
+Let's rearrange the data and add an index. We will turn this tibble into the time series object (using class `tsibble`).
+
+```{r}
+icecore_df <- icecore %>% 
+  mutate(time=-age, .before = 1) %>% 
+  select(-age) %>% 
+  arrange(time) 
+```
+
+Lets plot the response variables
+
+```{r}
+icecore_df %>% 
+  select(time, EDML, GRIP) %>% 
+  pivot_longer(-time, names_to="core", values_to="value") %>%
+  ggplot()+
+  geom_line(aes(time,value, color=core))+
+  facet_wrap(vars(core), ncol=1)
+```
+
+There does not appear to be a clear seasonality (after all the data is sampled every 20 years), but we can clearly see that there's a trend. 
+
+# GRIP
+
+## Simple Forecasting
+
+First, we will create the training and test set, separating the period for which we dont have the response variable, but have the predictor variables
+
+```{r}
+idx_GRIP_train <- !is.na(icecore_df$GRIP)
+idx_EDML_train <- !is.na(icecore_df$EDML)
+
+GRIP_train_ts <- icecore_df %>%
+  select(-EDML) %>% 
+  filter(idx_GRIP_train) %>%
+  as_tsibble(index = time)
+GRIP_test_ts <- icecore_df %>% 
+  select(-GRIP, -EDML) %>% 
+  filter(!idx_GRIP_train) %>%
+  as_tsibble(index = time)
+```
+
+
+```{r}
+trend_mod_GRIP <- GRIP_train_ts %>%
+  model(linear=TSLM(GRIP ~trend()),
+        piecewise=TSLM(GRIP~trend(knots=c(-7200,-2200)))
+        )
+
+fc_trend_mod_GRIP <- trend_mod_GRIP %>% 
+  fabletools::forecast(h=20)
+
+trend_mod_GRIP %>% 
+  report()
+```
+
+```{r}
+GRIP_train_ts %>% 
+  autoplot(GRIP)+
+  geom_line(data=fitted(trend_mod_GRIP),
+            aes(y=.fitted, color=.model))+
+  autolayer(fc_trend_mod_GRIP, alpha=0.6, level=95)+
+  labs(title="Trend models and forecasts")
+```
+
+## Smoothing
+
+Lets try some time series smoothing First, here's a 9 period moving average. Pretty strong trend.
+
+```{r}
+GRIP_train_ts %>% 
+  mutate(`GRIP-9-MA`=slider::slide_dbl(GRIP, mean, 
+             .before=4, .after=4, .complete=TRUE)) %>% 
+  autoplot(GRIP)+
+  geom_line(aes(y=`GRIP-9-MA`), color="orange")
+
+```
+
+Right now all 9 points in the smoothing window are equally weighted. Exponential smoothing creates a kernel of weights which attenuate away from the current point backward. Here's a model with simple exponential smoothing.
+
+```{r}
+es_mod_GRIP <- GRIP_train_ts %>% 
+  model(ETS(GRIP~error("A")+trend("N")))
+fc_es_mod_GRIP <- es_mod_GRIP %>% 
+  fabletools::forecast(h=20)
+
+fc_es_mod_GRIP %>% 
+  autoplot(GRIP_train_ts)+
+  geom_line(data=augment(es_mod_GRIP),aes(y=.fitted), col="orange")+
+  labs(title="Simple exponential smoothing")
+```
+
+Let's try and incorporate the trend. This is using Holt's linear trend method.
+
+```{r}
+es_mod_GRIP <- GRIP_train_ts %>% 
+  model(AAN=ETS(GRIP~error("A")+trend("A")))
+fc_es_mod_GRIP <- es_mod_GRIP %>% 
+  fabletools::forecast(h=20)
+
+fc_es_mod_GRIP %>% 
+  autoplot(GRIP_train_ts)+
+  geom_line(data=augment(es_mod_GRIP),aes(y=.fitted), col="orange")+
+  labs(title="AAN exponential smoothing")
+```
+
+As you can see the forecast picked up the downward sloping global linear trend. 
+
+Damped linear trend method corrects the infinite Holt's trend projected into the future and instead attenuates the trend towards a flat line in the remote future. Let's add it and compare.
+
+```{r}
+es_mod_GRIP <- GRIP_train_ts %>% 
+  model(AAN=ETS(GRIP~error("A")+trend("A")),
+        AAdN=ETS(GRIP~error("A")+trend("Ad", phi=0.9)))
+fc_es_mod_GRIP <- es_mod_GRIP %>% 
+  fabletools::forecast(h=20)
+
+fc_es_mod_GRIP %>% 
+  autoplot(GRIP_train_ts)+
+  geom_line(data=augment(es_mod_GRIP),aes(y=.fitted), col="orange")+
+  labs(title="AAN vs AAdN exponential smoothing")
+```
+
+
+# Regression
+
+Let's try to build a regression model. The time-indexed regression model of the form
+
+$$y_t=\beta_0+\beta_1x_{1,t}+\beta_2x_{2,t}+\dots+\beta_kx_{k,t}+\varepsilon_t.$$
+
+
+It makes the following assumptions about the errors $(\varepsilon_1,\varepsilon_2,\dots,\varepsilon_T)$:
+
+- errors are unbiased (having a mean of zero)
+- errors are not autocorrelated (there's no remaining trend)
+- errors are not related to the preditors (all signal has been extracted)
+- errors are normally distributed with constant variance (for the purposes of making predictive intervals)
+
+
+```{r}
+all_mod_GRIP  <- GRIP_train_ts %>%  
+  model(TSLM(GRIP~Q_trop_high+Q_trop_mid+Q_trop_low+
+               Q_stra_high+Q_stra_mid+Q_stra_low)) 
+report(all_mod_GRIP)
+```
+
+None of the predictors is significant. How nice! Let's see the predicted values
+
+```{r}
+augment(all_mod_GRIP) %>% 
+  ggplot(aes(x=time))+
+  geom_line(aes(y=GRIP, color="Data"))+
+  geom_line(aes(y=.fitted, color="Fitted"))+
+  scale_color_manual(values=c(Data="black", Fitted="orange"))
+```
+
+```{r}
+augment(all_mod_GRIP) %>% 
+  ggplot(aes(x=GRIP,y=.fitted))+
+  geom_point()+
+  geom_abline(intercept = 0, slope = 1)
+```
+
+
+```{r}
+all_mod_GRIP %>% gg_tsresiduals()
+```
+
+The plot shows significant autocorrelation in the residuals. We can try and plot the residuals against the covariates.
+
+```{r}
+icecore_df %>% 
+  left_join(residuals(all_mod_GRIP), by="time") %>% 
+  pivot_longer(starts_with("Q_"), names_to = "covariate", values_to="value") %>% 
+  ggplot(aes(x=value, y=.resid))+
+  geom_point()+
+  facet_wrap(vars(covariate), scales = "free_x")+
+  labs(title="Residuals vs predictors")
+```
+
+Lets plot our residuals against the fitted values
+
+```{r}
+augment(all_mod_GRIP) %>% 
+  ggplot(aes(x=.fitted, y=.resid))+
+  geom_point()+labs(title="Residuals vs fitted")
+```
+
+```{r}
+glance(all_mod_GRIP) %>% 
+  select(adj_r_squared, CV, AIC, AICc, BIC)
+```
+
+```{r}
+fc_all_mod_GRIP <- fabletools::forecast(all_mod_GRIP,
+                                        new_data=GRIP_test_ts)
+GRIP_train_ts %>% 
+  autoplot(GRIP)+
+  autolayer(fc_all_mod_GRIP)+
+  labs(title="GRIP core readings and forecast")
+```
+
+## ARIMA regression models
+
+There seems to be quite a lot of signal left in the error term of our regression. We can try to extract this signal by fitting an ARIMA model to the residuals. Let's start with a single covariate:
+
+$$y_t=\beta_0+\beta_1x_t+\eta_t$$
+
+where $\eta_t$ is an ARIMA model. The order of the model can be specified explicitly, but can also be left up to the engine to select.
+
+```{r}
+ARIMA_mod_GRIP <- GRIP_train_ts %>% 
+  model(ARIMA(GRIP~Q_stra_high))
+report(ARIMA_mod_GRIP)
+```
+
+The function picked the linear model with ARIMA(2,1,2) errors for us. Note that the intercept is gone due to the differencing. The way we can interpret these coefficients is:
+
+$$
+\begin{gathered}
+y_t=1.153x_t+ \eta_t,\\
+\eta_t=-0.023\eta_{t-1}+0.2080\eta_{t-2}+\varepsilon_t-0.2503\varepsilon_{t-1}-0.6374\varepsilon_{t-2},\\
+\varepsilon_t \sim NID(0,0.05513)
+\end{gathered}
+$$
+
+```{r}
+ARIMA_mod_GRIP %>% gg_tsresiduals()
+augment(ARIMA_mod_GRIP) %>% 
+  features(.innov, ljung_box, dof=3, lag=8)
+```
+
+Lets predict!
+
+```{r}
+fabletools::forecast(ARIMA_mod_GRIP, new_data=GRIP_test_ts) %>% 
+  autoplot(GRIP_train_ts)+
+  labs("ARIMA regression forecast")
+```
+
+This is really good! The residuals looks nice and the forecast is sensible. 
+
+We should now see if we can improve the goodness of fit by adding more covariates. As you can remember from the correlogram plot, the covariates from the same latitude (high, med, low) vere strongly correlated. Perhaps we could add only one of each.
+
+```{r}
+ARIMA_mods <-GRIP_train_ts %>% 
+  model("all_stra"=ARIMA(GRIP~Q_stra_high+Q_stra_mid+Q_stra_low),
+        "all_trop"=ARIMA(GRIP~Q_trop_high+Q_trop_mid+Q_trop_low),
+        "all_high"=ARIMA(GRIP~Q_trop_high+Q_stra_high),
+        "all_highmid"=ARIMA(GRIP~Q_trop_high+Q_stra_high+Q_trop_mid+Q_stra_mid),
+        "all"=ARIMA(GRIP~Q_trop_high+Q_stra_high+Q_trop_mid+Q_stra_mid+Q_stra_low+Q_trop_low)
+        )
+glance(ARIMA_mods)
+```
+
+Looking at the AIC or the AICc, the best model seems to be with the variables from high latitude. Lets look at the residuals.
+
+```{r}
+select(ARIMA_mods, "all_high") %>% 
+  gg_tsresiduals()
+```
+
+Just awesome. No autocorrelation in residuals, nice distribution. No obvious pattern. Let's predict using both variables from high latitude.
+
+```{r}
+select(ARIMA_mods, "all_high") %>% 
+  fabletools::forecast(new_data=GRIP_test_ts) %>% 
+  autoplot(GRIP_train_ts)+
+  labs(title="ARIMA regression model with all variables")
+```
+
+
+
+
