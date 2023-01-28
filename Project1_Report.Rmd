@@ -25,6 +25,8 @@ library(hrbrthemes) #ggplot styling
 ggplot2::theme_set(hrbrthemes::theme_ipsum_rc())
 ```
 
+# Introduction
+
 ## Data description
 
 The data file production_data.csv contain 400 observations on 8 variables. 6 of the variables are synthetic production rate of 10Be for the last 8000 years from different regions of the globe. These regional synthetic production rate are based on a production model that can simulate theoretical production rate at each latitude and height (km). We generate the production rate and combine them (summation) into different regions. Therefore, correlation are expected between neighboring regions. Beside the regional correlation, there are also time autocorrelation in the dataset.
@@ -110,9 +112,7 @@ icecore_df %>%
 
 There does not appear to be a clear seasonality (after all the data is sampled every 20 years), but we can clearly see that there's a trend. 
 
-# GRIP
-
-## Simple Forecasting
+# Train-test split
 
 First, we will create the training and test set, separating the period for which we dont have the response variable, but have the predictor variables
 
@@ -128,8 +128,21 @@ GRIP_test_ts <- icecore_df %>%
   select(-GRIP, -EDML) %>% 
   filter(!idx_GRIP_train) %>%
   as_tsibble(index = time)
+
+EDML_train_ts <- icecore_df %>%
+  select(-GRIP) %>% 
+  filter(idx_EDML_train) %>%
+  as_tsibble(index = time)
+EDML_test_ts <- icecore_df %>% 
+  select(-GRIP, -EDML) %>% 
+  filter(!idx_EDML_train) %>%
+  as_tsibble(index = time)
+
 ```
 
+# Greenland (GRIP) ice core 
+
+## Simple Forecasting
 
 ```{r}
 trend_mod_GRIP <- GRIP_train_ts %>%
@@ -139,9 +152,6 @@ trend_mod_GRIP <- GRIP_train_ts %>%
 
 fc_trend_mod_GRIP <- trend_mod_GRIP %>% 
   fabletools::forecast(h=20)
-
-trend_mod_GRIP %>% 
-  report()
 ```
 
 ```{r}
@@ -212,7 +222,7 @@ fc_es_mod_GRIP %>%
 ```
 
 
-# Regression
+## Time series regression
 
 Let's try to build a regression model. The time-indexed regression model of the form
 
@@ -225,7 +235,6 @@ It makes the following assumptions about the errors $(\varepsilon_1,\varepsilon_
 - errors are not autocorrelated (there's no remaining trend)
 - errors are not related to the preditors (all signal has been extracted)
 - errors are normally distributed with constant variance (for the purposes of making predictive intervals)
-
 
 ```{r}
 all_mod_GRIP  <- GRIP_train_ts %>%  
@@ -290,7 +299,7 @@ GRIP_train_ts %>%
   labs(title="GRIP core readings and forecast")
 ```
 
-## ARIMA regression models
+## ARIMA regression
 
 There seems to be quite a lot of signal left in the error term of our regression. We can try to extract this signal by fitting an ARIMA model to the residuals. Let's start with a single covariate:
 
@@ -319,8 +328,7 @@ ARIMA_mod_GRIP %>% gg_tsresiduals()
 augment(ARIMA_mod_GRIP) %>% 
   features(.innov, ljung_box, dof=3, lag=8)
 ```
-
-Lets predict!
+This is really good! The residuals looks nice and the forecast should be sensible. Lets predict!
 
 ```{r}
 fabletools::forecast(ARIMA_mod_GRIP, new_data=GRIP_test_ts) %>% 
@@ -328,37 +336,199 @@ fabletools::forecast(ARIMA_mod_GRIP, new_data=GRIP_test_ts) %>%
   labs("ARIMA regression forecast")
 ```
 
-This is really good! The residuals looks nice and the forecast is sensible. 
-
 We should now see if we can improve the goodness of fit by adding more covariates. As you can remember from the correlogram plot, the covariates from the same latitude (high, med, low) vere strongly correlated. Perhaps we could add only one of each.
 
 ```{r}
 ARIMA_mods <-GRIP_train_ts %>% 
-  model("all_stra"=ARIMA(GRIP~Q_stra_high+Q_stra_mid+Q_stra_low),
+  model("stra_high"=ARIMA(GRIP~Q_stra_high),
+        "trop_high"=ARIMA(GRIP~Q_trop_high),
+        "all_stra"=ARIMA(GRIP~Q_stra_high+Q_stra_mid+Q_stra_low),
         "all_trop"=ARIMA(GRIP~Q_trop_high+Q_trop_mid+Q_trop_low),
         "all_high"=ARIMA(GRIP~Q_trop_high+Q_stra_high),
         "all_highmid"=ARIMA(GRIP~Q_trop_high+Q_stra_high+Q_trop_mid+Q_stra_mid),
+        "all_highlow"=ARIMA(GRIP~Q_trop_high+Q_stra_high+Q_trop_low+Q_stra_low),
         "all"=ARIMA(GRIP~Q_trop_high+Q_stra_high+Q_trop_mid+Q_stra_mid+Q_stra_low+Q_trop_low)
         )
 glance(ARIMA_mods)
 ```
 
-Looking at the AIC or the AICc, the best model seems to be with the variables from high latitude. Lets look at the residuals.
+Looking at the AIC or the AICc, the best model seems to be with the variables from high latitude ("Allhigh"), while BIC (which penalizes model complexity a little more) favors our original model with a single high latitude stratosphere variable("Strahigh").
+
+Lets look at the "Allhigh" model details.
 
 ```{r}
-select(ARIMA_mods, "all_high") %>% 
+GRIP_allhigh_mod <- select(ARIMA_mods, "all_high")
+
+GRIP_allhigh_mod %>% report()
+```
+Lets look at the residuals.
+
+```{r}
+gg_tsresiduals(GRIP_allhigh_mod)+
+  labs(title="Residuals diagnostic plots",
+       subtitle = "Allhigh model")
+```
+
+
+Just awesome! No autocorrelation in residuals, nice distribution. No obvious pattern. A few more diagnostic plots to check the residuals.
+
+```{r}
+augment(GRIP_allhigh_mod) %>% 
+  ggplot(aes(x=GRIP,y=.fitted))+
+  geom_point()+
+  geom_abline(intercept = 0, slope = 1)+
+  labs(title="Predicted vs fitted",
+       subtitle = "Allhigh model")
+```
+
+```{r}
+icecore_df %>% 
+  left_join(residuals(GRIP_allhigh_mod), by="time") %>% 
+  pivot_longer(starts_with("Q_"), names_to = "covariate", values_to="value") %>% 
+  ggplot(aes(x=value, y=.resid))+
+  geom_point()+
+  facet_wrap(vars(covariate), scales = "free_x")+
+  labs(title="Residuals vs predictors", subtitle = "Allhigh model")
+```
+
+Lets plot our residuals against the fitted values
+
+```{r}
+augment(GRIP_allhigh_mod) %>% 
+  ggplot(aes(x=.fitted, y=.resid))+
+  geom_point()+labs(title="Residuals vs fitted", subtitle = "Allhigh model")
+```
+
+No particular pattern here. All good, it seems.
+
+## Cross-validation
+
+We will use time series cross-validation to decide which model to use for prediction. We cross-validate the performance of the simple "Strahigh" model against the more complex "Allhigh".
+
+```{r}
+GRIP_train_stretched <- GRIP_train_ts %>% 
+  stretch_tsibble(.init=100, .step=50) 
+GRIP_cv_mod <- GRIP_train_stretched %>% 
+  model("strahigh"=ARIMA(GRIP~0+pdq(2,1,2)+Q_stra_high),
+        "allhigh"=ARIMA(GRIP~0+pdq(2,1,2)+Q_stra_high+Q_trop_high))
+```
+
+We now prepare the validation sets and predict on them, calculating the performance. We will predict 16 observations at a time (the size of our test set).
+
+```{r}
+GRIP_cv_valid_ts <- new_data(GRIP_train_stretched, n=16) %>% 
+  left_join(GRIP_train_ts, by="time")
+
+GRIP_cv_mod_fc <- fabletools::forecast(GRIP_cv_mod, new_data=GRIP_cv_valid_ts) %>% 
+  group_by(.id, .model) %>% 
+  mutate(h=row_number()) %>% 
+  ungroup() %>% 
+  as_fable(response="GRIP", distribution=GRIP)
+
+GRIP_cv_mod_fc %>% 
+  fabletools::accuracy(GRIP_train_ts, by=c("h", ".model")) %>% 
+  group_by(.model, .type) %>% 
+  summarize_all(mean)
+```
+The original model is better in every respect! BIC was right (as always).
+
+Let's predict using the `Q_stra_high` variable.
+
+```{r}
+ARIMA_mod_GRIP %>% 
+  fabletools::forecast(new_data=GRIP_test_ts) %>% 
+  autoplot(GRIP_train_ts)+
+  labs(title="Prediction from ARIMA model",
+       subtitle="Strahigh model")
+```
+
+# Antarctica (EDML) ice core
+
+## ARIMA regression
+
+Let's save ourselves some time and go straight to the ARIMA regression for EDML response variable
+
+```{r}
+all_mod_EDML <- EDML_train_ts %>% 
+  model("stra_low"=ARIMA(EDML~Q_stra_low),
+        "trop_low"=ARIMA(EDML~Q_trop_low),
+        "all_stra"=ARIMA(EDML~Q_stra_high+Q_stra_mid+Q_stra_low),
+        "all_trop"=ARIMA(EDML~Q_trop_high+Q_trop_mid+Q_trop_low),
+        "all_low"=ARIMA(EDML~Q_stra_low+Q_trop_low),
+        "all_lowmid"=ARIMA(EDML~Q_stra_low+Q_trop_low+Q_stra_mid+Q_trop_mid),
+        "all_lowhigh"=ARIMA(EDML~Q_stra_low+Q_trop_low+Q_stra_high+Q_trop_high),
+        "all"=ARIMA(EDML~Q_stra_high+Q_stra_mid+Q_stra_low+
+                      Q_trop_high+Q_trop_mid+Q_trop_low))
+glance(all_mod_EDML)
+```
+
+BIC prefers the "lowmid" model, while the AIC favors the "lowhigh" model.
+
+Let's pick one of them and look at the residuals.
+
+```{r}
+all_mod_EDML %>% select("all_lowmid") %>% 
   gg_tsresiduals()
 ```
 
-Just awesome. No autocorrelation in residuals, nice distribution. No obvious pattern. Let's predict using both variables from high latitude.
+Residuals look largely ok with only two periods "sticking out" of the confidence bands: at lags 14 and 22 (no obvious reason why). I am concerned about the non-stationary variance of the residuals and, therefore, slightly irregular shape of the error distribution. 
 
 ```{r}
-select(ARIMA_mods, "all_high") %>% 
-  fabletools::forecast(new_data=GRIP_test_ts) %>% 
-  autoplot(GRIP_train_ts)+
-  labs(title="ARIMA regression model with all variables")
+all_mod_EDML %>% select("all_lowmid") %>% 
+  report()
 ```
 
+This is a pretty complex model: 4 covariates, 4 lags, and 2 moving averages. 
 
+The alternative model's residuals
 
+```{r}
+all_mod_EDML %>% select("all_lowhigh") %>% 
+  gg_tsresiduals()
+```
+
+Here we have a significant autoregression at the lag 7 and 22.
+
+```{r}
+all_mod_EDML %>% select("all_lowhigh") %>% 
+  report()
+```
+This is somewhat simpler model with 3 lags, 1 moving average and 4 variables.
+
+## Cross-validation
+
+We will employ the "stretching window" cross-validation scheme to assess the performance of the selected number of models on the training data (effectively treating part of it as a validation set). Here we will set the initial training set to be 100 observations and then at every iteration we will add 61 to the training set, always predicting 61 observations (equivalent to the size of the test set we are trying to predict).
+
+```{r}
+EDML_stretched <- EDML_train_ts %>% 
+  stretch_tsibble(.init=100, .step=61) 
+EDML_cv_mod <- EDML_stretched %>% 
+  model("all_lowmid"=ARIMA(EDML~0+pdq(4,0,2)+Q_stra_low+Q_trop_low+Q_stra_mid+Q_trop_mid),
+        "all_lowhigh"=ARIMA(EDML~0+pdq(3,0,1)+Q_stra_low+Q_trop_low+Q_stra_high+Q_trop_high))
+```
+
+```{r}
+EDML_cv_valid_ts <- new_data(EDML_stretched, n=61) %>% 
+  left_join(EDML_train_ts, by="time")
+
+EDML_cv_mod_fc <- fabletools::forecast(EDML_cv_mod, new_data=EDML_cv_valid_ts) %>% 
+  group_by(.id, .model) %>% 
+  mutate(h=row_number()) %>% 
+  ungroup() %>% 
+  as_fable(response="EDML", distribution=EDML)
+
+EDML_cv_mod_fc %>% fabletools::accuracy(EDML_train_ts, by=c("h", ".model")) %>% 
+  group_by(.model, .type) %>% 
+  summarize_all(mean)
+```
+
+The "lowhigh" is slightly better on all metrics. 
+
+```{r}
+all_mod_EDML %>% select(all_lowhigh) %>% 
+  fabletools::forecast(new_data=EDML_test_ts) %>% 
+  autoplot(EDML_train_ts)+
+  labs(title="Prediction from ARIMA model",
+       subtitle="Lowhigh model")
+```
 
