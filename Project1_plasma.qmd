@@ -1,0 +1,108 @@
+---
+title: "Project 1"
+subtitle: "Additional assignment"
+author: "Dmytro Perepolkin"
+format: html
+bibliography: Project1_plasma.bib
+---
+
+```{r setup}
+#| message: false
+#| warning: false
+library(tidyverse)
+library(broom)
+```
+
+# Introduction
+
+## Data overview
+
+The dataset is from `gamlss.data` package [@harrell2002PlasmaRetinolBetaCarotene]. It is a cross-sectional study to investigate the relationship between personal characteristics and dietary factors, and plasma concentrations.
+
+An original data frame has 315 observations of the following variables
+
+| Variable        | Description                                             |
+|-----------------|---------------------------------------------------------|
+| `age`           | age(years)                                              |
+| `sex`           | sex, 1=male, 2=female                                   |
+| `smokstat`      | smoking status 1=never, 2=former, 3=current Smoker      |
+| `bmi`           | body mass index weight/(height\^2)                      |
+| `vituse`        | vitamin use 1=yes, fairly often, 2=yes, not often, 3=no |
+| `calories`      | number of calories consumed per day                     |
+| `fat`           | grams of fat consumed per day                           |
+| `fiber`         | grams of fiber consumed per day                         |
+| `alcohol`       | number of alcoholic drinks consumed per week            |
+| `cholesterol`   | cholesterol consumed (mg per day)                       |
+| `betadiet`      | dietary beta-carotene consumed (mcg per day)            |
+| `retdiet`[^1]   | dietary retinol consumed (mcg per day)                  |
+| `betaplasma`    | plasma beta-carotene (ng/ml)                            |
+| `retplasma`[^2] | plasma retinol (ng/ml)                                  |
+
+[^1]: Not present in the current version of the dataset
+
+[^2]: Not present in the current version of the dataset
+
+We import the data
+
+```{r}
+plasma_df <- read_csv("data/plasma.txt", show_col_types = FALSE)
+```
+
+> Observational studies have suggested that low dietary intake or low plasma concentrations of retinol, beta-carotene, or other carotenoids might be associated with increased risk of developing certain types of cancer... We designed a cross-sectional study to investigate the relationship between personal characteristics and dietary factors, and plasma concentrations of retinol, beta-carotene and other carotenoids. [@harrell2002PlasmaRetinolBetaCarotene]
+
+# Inference and prediction
+
+According to the good statistical practices we should not look at the data before deciding on the model structure. We are going to follow this rule and hypothesize about the model without looking at the data. This is especially important if the objective is not prediction, but inference (i.e. if our goal is to infer something about the significance of parameters, rather than to predict the next observation). We will break down our study into two parts.
+
+-   First, we will *hypothesize about the relationship* between some variables (basically making a scientific hypothesis and trying to falsify it). We measure success by statistical significance of individual coefficients and the model as a whole.
+-   Then, we will *predict the next observation* (without necessarily paying much attention to the significance of individual coefficients). In this task, the success will be measured by the quality of our predictions out of sample.
+
+As @wickham2016DataScienceImport puts it:
+
+> Each observation can either be used for exploration or confirmation, not both. You can use an observation as many times as you like for exploration, but you can only use it once for confirmation. As soon as you use an observation twice, you've switched from confirmation to exploration.
+
+## Univariate model(s)
+
+Our inference hypothesis is that the dietary amount of consumed beta-carotene (BC) affects the content of beta-carotene in plasma. In order to falsify this hypothesis, we will create a linear model and hypothesize that coefficients in that model are zero. Our model:
+
+$$Y=\alpha+\beta X+\varepsilon$$,
+
+where $Y$ is amount of BC in plasma, $X$ is dietary consumption of BC and $\varepsilon$ is the normally distributed error term. Our null hypothesis is that both intercept $\alpha$ and slope $\beta$ are zero, i.e. there's no effect of consumption of BC on the content of BC in the blood (neither on average, nor per unit of BC consumption).
+
+```{r}
+bc1_mod <- lm(betaplasma~betadiet, data=plasma_df)
+summary(bc1_mod)
+```
+
+As our model shows, we can reject the hypothesis about the no effect of consumed BC on the content of BC in plasma with quite a high confidence. Even though the $R^2$ is pretty low, the p-value for the model is significant. It means that (let me see if I can get this right):
+
+> Assuming that our null hypothesis is true (that there's no effect of consumed BC on the BC content in plasma) under the ininite series of replications we would find the data as extreme or more extreme as this one in `r scales::label_percent(0.001)(glance(bc1_mod)$p.value*100)` of such replications.
+
+The same can be said about the intercept and slope separately. The individual hypotheses for the slope and intercept should be spelled out in a similar manner:
+
+-   **slope**: One unit of increase of BC consumption is associated with exactly zero units increase of BC in plasma
+-   **intercept**: Zero consumption of BC is associated with exactly zero content of BC in plasma.
+
+We could hypothesize that the alcohol use is associated with BC in plasma.
+
+```{r}
+bc2_mod <- lm(betaplasma~alcohol, data=plasma_df)
+summary(bc2_mod)
+```
+
+No, unfortunately not. Using this data we can not claim that alcohol consumption is associated with the BC in plasma (the slope is not significant).
+
+Last univariate model to try. Let's say that the amount of consumed fiber is associated with the BC in plasma. We check it with the following model
+
+```{r}
+bc3_mod <- lm(betaplasma~fiber, data=plasma_df)
+summary(bc3_mod)
+```
+
+Yes! Based on this data we can claim that given that our null hypothesis (about the absence of association of the fiber consumption with BC in plasma) is true, under infinite number of replications we would find the data to be as extreme or more extreme than this `r scales::label_percent(0.001)(glance(bc3_mod)$p.value*100)` of the time. Again, interpretation of the slope is the unit increas in the BC content in plasma per unit increase in fiber consumption and the intercept - the BC content in plasma corresponding to 0 fiber consumption.
+
+> Note! That there could be no causal inference made in this case. Fiber does not "cause" BC content in plasma. There could very well be confounding variables that give rise to this association, so the association (and the corresponding p-value) can very well be spurious. We created no causal model (DAG) and, therefore, we can not determine whether all the relevant controls have been accounted for in this data (or whether it is possible to make any causal queries in this dataset at all).
+
+## Multivariate model
+
+# References
