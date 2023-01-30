@@ -21,15 +21,20 @@ library(fable) # tsibble-based forecasting
 library(fabletools) #data structures for fable
 library(feasts) # feature extraction for time series
 library(hrbrthemes) #ggplot styling
+library(GGally) # Pair plot
+library(ggplot2) # ggplot 2
 
-ggplot2::theme_set(hrbrthemes::theme_ipsum_rc())
+#ggplot2::theme_set(hrbrthemes::theme_ipsum_rc())
 ```
 
 # Introduction
 
 ## Data description
 
-The data file production_data.csv contain 400 observations on 8 variables. 6 of the variables are synthetic production rate of 10Be for the last 8000 years from different regions of the globe. These regional synthetic production rate are based on a production model that can simulate theoretical production rate at each latitude and height (km). We generate the production rate and combine them (summation) into different regions. Therefore, correlation are expected between neighboring regions. Beside the regional correlation, there are also time autocorrelation in the dataset.
+The data file production_data.csv contain 400 observations on 8 variables. 
+  6 of the variables are synthetic production rate of 10Be for the last 8000 years from different regions of the globe. These regional synthetic production rate are based on a production model that can simulate theoretical production rate at each latitude and height (km). We generate the production rate and combine them (summation) into different regions. Therefore, correlation are expected between neighboring regions. Beside the regional correlation, there are also time autocorrelation in the data set.  
+  2 of the variables are observation (EDML and GRIP). They are 10Be flux measured from the EDML ice in Antarctica and the GRIP in Greenland.
+  
 
 ## Variable description
 
@@ -140,6 +145,275 @@ EDML_test_ts <- icecore_df %>%
 
 ```
 
+# Approach 1: assumed the data to be independent and identically distributed 
+
+In this approach we only focus on the observation data in EDML.
+
+## Regression model 
+First, we need to address the possible time autocorrelation introduced by the response variable into the error term of our linear models. The time autocorrelation in EDML data is significant until after lag 3 (i.e. 3 data points away from the sampling point).
+
+```{r}
+par(mar=c(4,4,4,4))
+plot(acf(na.omit(icecore$EDML), plot=FALSE), main='EDML data')
+```
+We can attempt to reduce this by binning the data via taking the average of every 3 data points. Below is summary of the processed data set. It can be observed that the mean production rate of 10Be is lower in the troposphere compared to the stratosphere. Particularly, the production rate of the stratosphere is significant high at the mid and high latitudes.
+
+```{r}
+EDML_dat <- icecore %>% 
+  select(-GRIP) %>%
+  filter(!is.na(EDML)) %>%
+  group_by(row_number() %/% 3) %>%
+  summarise_all(mean)
+# Summary
+summary(EDML_dat[-c(1,2)])
+```
+Correlation table of the data:
+
+```{r}
+cor(EDML_dat[-c(1,2)])
+```
+## Simple linear regression
+We select Q_stra_mid to build a simple linear regression to predict the EDML data. The reasons are that (1) it highly correlated to EDML and (2) a lot of 10Be is produce here.
+
+```{r}
+q_stra_mid_lm <- lm(EDML ~ Q_stra_mid, data=EDML_dat)
+summary(q_stra_mid_lm)
+```
+The independent variable is significant and can explain ~78% of the variation as indicated by R-squared. Below are the confidence intervals for the coefficient estimates.
+
+```{r}
+confint(q_stra_mid_lm)
+```
+Here, we should be careful when interpreting the coefficients. Since the EDML data was normalized, we cannot interpret the absolute value of the coefficients. If we take this literally, this would mean that 1 atom of 10Be produce in the mid latitude stratosphere corresponds to 3 atoms of 10Be coming to the Antarctica. This makes no sense! However, we can conclude that there is a strong positively linear relation between Q_stra_mid and EDML.
+The response variable is plotted versus the independent variable below. The plot includes the linear prediction (black solid line), its confidence interval (grey envelope) and its prediction interval (dashed black lines).
+
+```{r}
+# Generate prediction interval
+X <- data.frame(Q_stra_mid=seq(min(EDML_dat$Q_stra_mid),max(EDML_dat$Q_stra_mid),0.05))
+pred_int <- cbind(X,predict(q_stra_mid_lm,X,interval="prediction"))
+# Plot
+ggplot(data=EDML_dat, aes(x=Q_stra_mid,y=EDML)) + 
+  geom_point(alpha=0.7, color='blue') +
+  geom_smooth(method="lm", color='black') +
+  geom_line(data=pred_int,aes(x=Q_stra_mid,y=upr), color='black', linetype=2) + 
+  geom_line(data=pred_int,aes(x=Q_stra_mid,y=lwr), color='black', linetype=2) +
+  theme_bw() 
+```
+The linear model works quite well. Let's assess the model fit:
+There is no time autocorrelation or trend in the residual.
+
+```{r}
+EDML_pred_simple <- EDML_dat %>%
+  select(EDML,Q_stra_mid) %>%
+  mutate(fit=predict(q_stra_mid_lm,data=EDML_dat)) %>%
+  mutate(res=residuals(q_stra_mid_lm)) %>%
+  mutate(rstudent=rstudent(q_stra_mid_lm))
+# Plot
+ggplot(data=EDML_pred_simple, aes(x=as.numeric(row.names(EDML_pred_simple)),y=res)) + 
+  geom_point() + geom_line() + labs(x='Index', y='Residual') +theme_bw() 
+```
+```{r}
+par(mar=c(4,4,4,4))
+plot(acf(EDML_pred_simple$res, plot=FALSE),main="Residual (Simple Linear)")
+```
+The variance of error terms seems fine.
+
+```{r}
+ggplot(data=EDML_pred_simple, aes(x=fit,y=res)) + geom_point() + geom_smooth()
+```
+```{r}
+ggplot(data=EDML_pred_simple, aes(x=fit,y=rstudent)) + geom_point() + geom_smooth()
+```
+
+## Polynomial regression
+Let's try to fit the data with a simple polynomial regression.
+
+```{r}
+# Create a squared variable
+EDML_pred_simple <- EDML_pred_simple %>% 
+  mutate(Q_stra_mid2=Q_stra_mid**2)
+# Fit
+q_stra_mid_poly <- lm(EDML ~ Q_stra_mid + Q_stra_mid2, data=EDML_pred_simple)
+summary(q_stra_mid_poly)
+```
+This model does not help explain more variation in the EDML data and the coefficients are not significant. The plot below with the fitted model also shows that the relation is rather not polynomial. 
+
+```{r}
+X <- data.frame(Q_stra_mid=seq(0.6,1.1,0.1),
+                Q_stra_mid2=seq(0.6,1.1,0.1)**2)
+pred_int <- cbind(X,predict(q_stra_mid_poly,X,interval="prediction"))
+conf_int <- cbind(X,predict(q_stra_mid_poly,X,interval="confidence"))
+# Plot
+ggplot(data=EDML_pred_simple, aes(x=Q_stra_mid,y=EDML)) + 
+  geom_point(alpha=0.7, color='blue') +
+  geom_line(data=pred_int,aes(x=Q_stra_mid,y=fit)) + 
+  geom_line(data=conf_int,aes(x=Q_stra_mid,y=upr), color='grey') + 
+  geom_line(data=conf_int,aes(x=Q_stra_mid,y=lwr), color='grey') +  
+  geom_line(data=pred_int,aes(x=Q_stra_mid,y=upr), color='black', linetype=2) + 
+  geom_line(data=pred_int,aes(x=Q_stra_mid,y=lwr), color='black', linetype=2) +
+  theme_bw() 
+```
+## Multi-regression model
+Let's try to use all of the variables to predict EDML (except age and index of course)
+
+```{r}
+all_lm <- lm(EDML ~ ., data=EDML_dat[-c(1,2)])
+summary(all_lm)
+```
+This multi-linear model does not help explain more variation in the EDML data and none of the coefficients are significant. We believe that only a subset of the variables are useful since the variables are strongly correlated among themselves.
+Let's only select 2 regions in the stratosphere that are relevant and highly correlated to the EDML data Q_stra_mid and Q_stra_high.
+
+```{r}
+stra_lm <- lm(EDML ~ Q_stra_mid + Q_stra_high, data=EDML_dat)
+summary(stra_lm)
+```
+This multi-linear model can explain 80% variation in the observation data which is slightly better than the simple model. Both of the independent variables are relevant.
+
+```{r}
+confint(stra_lm)
+```
+And again the residual looks fine.
+
+```{r}
+EDML_pred_multi <- EDML_dat %>%
+  select(EDML,Q_stra_mid,Q_stra_high) %>%
+  mutate(fit=predict(stra_lm,data=EDML_dat)) %>%
+  mutate(res=residuals(stra_lm)) %>%
+  mutate(rstudent=rstudent(stra_lm))
+# Plot
+ggplot(data=EDML_pred_multi, aes(x=as.numeric(row.names(EDML_pred_multi)),y=res)) + 
+  geom_point() + geom_line() + labs(x='Index', y='Residual') +theme_bw() 
+```
+```{r}
+par(mar=c(4,4,4,4))
+plot(acf(EDML_pred_multi$res, plot=FALSE),main="Residual (Simple Linear)")
+```
+```{r}
+ggplot(data=EDML_pred_multi, aes(x=fit,y=res)) + geom_point() + geom_smooth()
+```
+
+```{r}
+ggplot(data=EDML_pred_multi, aes(x=fit,y=rstudent)) + geom_point() + geom_smooth()
+```
+The plot below shows the prediction of EDML by Q_stra_mid where Q_stra_high values = 1.5, 2.0 and 2.5 (indicated by the numbers below the prediction lines).
+
+```{r}
+# Generate prediction data
+X15 <- data.frame(Q_stra_mid=seq(0.6,1.1,0.1),
+                Q_stra_high=rep(1.5,6))
+X20 <- data.frame(Q_stra_mid=seq(0.6,1.1,0.1),
+                Q_stra_high=rep(2.0,6))
+X25 <- data.frame(Q_stra_mid=seq(0.6,1.1,0.1),
+                Q_stra_high=rep(2.5,6))
+pred_int15 <- cbind(X15,predict(stra_lm,X15,interval="prediction"))
+pred_int20 <- cbind(X20,predict(stra_lm,X20,interval="prediction"))
+pred_int25 <- cbind(X25,predict(stra_lm,X25,interval="prediction"))
+# Plot
+ggplot(data=EDML_pred_multi, aes(x=Q_stra_mid,y=EDML)) + 
+  geom_point(alpha=0.7, color='blue') +
+  geom_line(data=pred_int15,aes(x=Q_stra_mid,y=fit), linetype=2) +
+  geom_line(data=pred_int20,aes(x=Q_stra_mid,y=fit), linetype=2) + 
+  geom_line(data=pred_int25,aes(x=Q_stra_mid,y=fit), linetype=2) +
+  geom_text(x=1.1,y=4.7,label="2.5") + 
+  geom_text(x=1.1,y=5.1,label="2.0") + 
+  geom_text(x=1.1,y=5.4,label="1.5") + 
+  theme_bw() 
+```
+The plot below shows the prediction of EDML by Q_stra_high where Q_stra_mid values = 0.7, 0.9 and 1.1 (indicated by the numbers below the prediction lines).
+
+```{r}
+# Generate prediction data
+X07 <- data.frame(Q_stra_high=seq(1.3,2.7,0.1),
+                Q_stra_mid=rep(0.7,15))
+X09 <- data.frame(Q_stra_high=seq(1.3,2.7,0.1),
+                Q_stra_mid=rep(0.9,15))
+X11 <- data.frame(Q_stra_high=seq(1.3,2.7,0.1),
+                Q_stra_mid=rep(1.1,15))
+
+pred_int07 <- cbind(X07,predict(stra_lm,X07,interval="prediction"))
+pred_int09 <- cbind(X09,predict(stra_lm,X09,interval="prediction"))
+pred_int11 <- cbind(X11,predict(stra_lm,X11,interval="prediction"))
+# Plot
+ggplot(data=EDML_pred_multi, aes(x=Q_stra_high,y=EDML)) + 
+  geom_point(alpha=0.7, color='blue') +
+  geom_line(data=pred_int07,aes(x=Q_stra_high,y=fit), linetype=2) +
+  geom_line(data=pred_int09,aes(x=Q_stra_high,y=fit), linetype=2) + 
+  geom_line(data=pred_int11,aes(x=Q_stra_high,y=fit), linetype=2) +
+  geom_text(x=1.3,y=3.5,label="0.7") + 
+  geom_text(x=1.3,y=4.5,label="0.9") + 
+  geom_text(x=1.3,y=5.5,label="1.1") + 
+  theme_bw() 
+```
+The plots show the negative correlation between Q_stra_high and EDML. However, by looking at the second plot (Q_stra_high vs EDML) the correlation is rather positive. So despite the fact that the multi-linear model can explain extra variation, we suggest to use the simple linear regression with one variable.
+
+## PCA
+Since the independent variables are strongly correlated we believe that PCA will help in combining them into new useful variables.
+PC loadings:
+
+```{r}
+pca_dat <- EDML_dat %>%
+  select(Q_stra_low,Q_stra_mid,Q_stra_high,Q_trop_low,Q_trop_mid,Q_trop_high)
+pr.out <- prcomp(pca_dat, scale = FALSE)
+pr.out$rotation
+```
+How many PCs do we need?
+
+```{r}
+pr.var <- pr.out$sdev^2
+pve <- pr.var / sum(pr.var)
+df_pve <- data.frame(pve=pve,PC=c(1:6))
+plot1 <- df_pve %>% ggplot(aes(x=PC,y=pve))+
+  geom_point(size=3)+
+  geom_line() + 
+  labs(y="Proportion of variance explained") +  
+  theme(text=element_text(size=16))
+plot1
+```
+So most of the variation in our independent variables can be explained by PC1 and PC2 (to a lesser degree). Note that we used scale = FALSE to account for the differences in the amount of 10Be produced in different regions. PC1 is dominated by Q_stra_high and Q_stra_mid as we expected. PC2 contains the variations in Q_stra_mid that are negatively correlated with Q_stra_high. Let's look at the relationship between PC1, PC2 and EDML.
+
+```{r}
+EDML_dat$PC1 <- pr.out$x[,1]
+EDML_dat$PC2 <- pr.out$x[,2]
+ggplot(data=EDML_dat, aes(x=PC1,y=EDML)) + geom_point() + geom_smooth(method='lm')
+```
+
+```{r}
+ggplot(data=EDML_dat, aes(x=PC2,y=EDML)) + geom_point() + geom_smooth(method='lm')
+```
+We can see that PC1 is positively correlated with EDML while PC2 is negatively correlated with EDML. Let's predict EDML with a multi-linear regression model consists of PC1 and PC2
+
+```{r}
+pca_lm <- lm(EDML ~ PC1 + PC2, data=EDML_dat)
+summary(pca_lm)
+```
+
+```{r}
+confint(pca_lm)
+```
+The negative coefficient of PC2 is now making sense. PC2 collects the variation in Q_stra_mid that is negatively correlated with EDML. Again the residual looks fine.
+
+```{r}
+EDML_pred_pca <- EDML_dat %>%
+  select(EDML,PC1,PC2) %>%
+  mutate(fit=predict(pca_lm,data=EDML_dat)) %>%
+  mutate(res=residuals(pca_lm)) %>%
+  mutate(rstudent=rstudent(pca_lm))
+# Plot
+ggplot(data=EDML_pred_pca, aes(x=as.numeric(row.names(EDML_pred_pca)),y=res)) + 
+  geom_point() + geom_line() + labs(x='Index', y='Residual') +theme_bw() 
+```
+```{r}
+par(mar=c(4,4,4,4))
+plot(acf(EDML_pred_pca$res, plot=FALSE),main="Residual (Linear fit with PCA 1 and 2)")
+```
+```{r}
+ggplot(data=EDML_pred_pca, aes(x=fit,y=res)) + geom_point() + geom_smooth()
+```
+```{r}
+ggplot(data=EDML_pred_pca, aes(x=fit,y=rstudent)) + geom_point() + geom_smooth()
+```
+
+# Approach 2: assumed the data to be time-indexed
 # Greenland (GRIP) ice core 
 
 ## Simple Forecasting
