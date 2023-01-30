@@ -1,0 +1,1110 @@
+---
+title: "Global deposition of Beryllium in ice cores"
+author: 
+ - name: Hoang Long Nguyen
+   affiliations:
+     - name: Lund University
+       department: Department of Geology
+       address: Sölvegatan 12, S-223 62 Lund, Sweden
+ - name: Dmytro Perepolkin
+   affiliations:
+     - name: Lund University
+       department: Centre for Environmental and Climate Science
+       address: Sölvegatan 37, S-223 62 Lund, Sweden
+format: 
+  titlepage-pdf:
+    documentclass: scrbook
+    classoption: ["oneside", "open=any"]
+    number-sections: true
+    titlepage: classic-lined 
+    titlepage-logo: "img/logo.png"
+    titlepage-footer: |
+      Lund University\
+      Lund, Sweden\
+      [https://lu.se](https://lu.se)\
+    titlepage-theme:
+      elements: ["\\titleblock", "\\authorblock", "\\vfill", "\\logoblock", "\\footerblock"]
+      page-align: "center"
+      title-style: "doublelinewide"
+      title-fontsize: 30
+      title-fontstyle: "uppercase"
+      title-space-after: "0.1\\textheight"
+      subtitle-fontstyle: ["Large", "textit"]
+      author-style: "plain"
+      author-sep: "\\hskip1em"
+      author-fontstyle: "Large"
+      author-space-after: "2\\baselineskip"
+      affiliation-style: "numbered-list-with-correspondence"
+      affiliation-fontstyle: "large"
+      affiliation-space-after: "0pt"
+      footer-style: "plain"
+      footer-fontstyle: ["large", "textsc"]
+      footer-space-after: "0pt"
+      logo-size: "0.25\\textheight"
+      logo-space-after: "1cm"
+---
+
+```{r setup, message=FALSE}
+#| message: false
+#install.packages("corrgram")
+library(tidyverse)
+library(corrgram) # visualisation of correlations
+library(lmtest)  # more linear regression tools
+library(naniar) # missing data analysis
+library(tsibble) # time series tibbles
+library(fable) # tsibble-based forecasting
+library(fabletools) #data structures for fable
+library(feasts) # feature extraction for time series
+library(hrbrthemes) #ggplot styling
+library(GGally) # Pair plot
+library(ggplot2) # ggplot 2
+library(hrbrthemes) # theme for ggplot
+library(kableExtra)
+ggplot2::theme_set(hrbrthemes::theme_ipsum_rc())
+
+extrafont::loadfonts(device = "all", quiet = TRUE)
+
+knitr::opts_chunk$set(dev = 'png')
+options(device = function(file, width, height) {
+  png(tempfile(), width = width, height = height)
+})
+```
+
+# Introduction
+
+## Data description
+
+The Icecore data file (`production_data.csv`) contain 400 observations of eight variables. Six of the variables are synthetic production rate of 10Be for the last 8000 years from different regions of the globe. These regional synthetic production rate are based on a production model that can simulate theoretical production rate at each latitude and height (km). We generate the production rate and combine them (summation) into different regions. Therefore, correlation are expected between neighboring regions. Beside the regional correlation, there are also time autocorrelation in the data set.  Two of the variables are observation (`EDML` and `GRIP`). They are 10Be flux measured from the EDML ice in Antarctica and the GRIP in Greenland.
+
+The table @tbl-variables contains the description of columns in the dataset.
+
+```{r}
+#| label: tbl-variables
+#| echo: false
+#| tbl-cap: "Description of variables in the Icecore dataset"
+vars_tbl <- tibble::tribble(
+  ~variable, ~description, ~unit,
+"age", "time before 1950", "years",
+"Q_trop_high", "10Be production rate in the troposphere at high latitude (60-90°)", "atoms/cm2/s",
+"Q_trop_mid",   "10Be production rate in the troposphere at mid latitude (30-60°)", "atoms/cm2/s",
+"Q_trop_low","   10Be production rate in the troposphere at low latitude (0-30°)", "atoms/cm2/s",
+"Q_stra_high","  10Be production rate in the stratosphere at high latitude (60-90°)", "atoms/cm2/s",
+"Q_stra_mid","  10Be production rate in the stratosphere at mid latitude (30-60°)", "atoms/cm2/s",
+"Q_stra_low"," 10Be production rate in the stratosphere at low latitude (0-30°)", "atoms/cm2/s",
+"EDML","10Be flux to Antarctica measured at the EDML ice core [normalized]", "10^6 atoms/cm2/year",
+"GRIP","10Be flux to Greenland measured at the GRIP ice core [normalized]", "10^6 atoms/cm2/year"
+)
+kbl(vars_tbl, booktabs = TRUE,
+    col.names = c("Variable", "Description", "Units")) %>% 
+  column_spec(2, width = "20em") %>% 
+  kable_styling(full_width = FALSE)
+```
+
+
+The variables `EDML` and `GRIP` (10Be flux) were normalized to have the same mean as the sum of 10Be production rate from all the regions over the last 8000 years.
+The goal is to analyse how much each region contributes to the 10Be fluxes to either Greenland or Antarctica.
+
+# Exploratory Data Analysis
+
+## Correlation structure
+
+First we load the data and look at it.
+
+```{r}
+#| label: import-data
+icecore <- read_csv("data/production_data.csv", show_col_types = FALSE)
+head(icecore)
+```
+
+Lets explore the correlation structure among the covariates (@fig-correllogram)
+
+```{r}
+#| label: fig-correllogram
+#| fig-width: 8
+#| fig-height: 5
+#| out-width: 80%
+#| fig-cap: "Correlogram for the icecore data"
+#| echo: false
+# removing ID variable and the dependent variables for now
+varnames<- setdiff(names(icecore), c("age", "EDML", "GRIP"))
+corrgram::corrgram(icecore[,varnames], order="PCA",
+         lower.panel=panel.ellipse, upper.panel=panel.pie,
+         diag.panel=panel.minmax, text.panel=panel.txt)
+```
+
+All independent variables are strongly correlated between themselves. Reordering by PCA identifies the groupings which make sense (by latitude).
+
+## Missing values
+
+There's some missingness in the data. 
+
+```{r}
+#| label: fig-miss
+#| fig-cap: "Missingness plot for Icecore dataset"
+#| message: false 
+#| warning: false
+#| echo: false
+#| fig-width: 7
+#| fig-height: 5
+#| out-width: 80% 
+naniar::vis_miss(icecore)
+```
+
+@fig-miss shows that the missingness is present only in the response variables `EDML` and `GRIP` and only the fist few observations, i.e. it is missing not-at-random.
+
+## Time aspect
+
+We will take somewhat closer look at the time series aspect of the data. First of all, since this is the geology-related data, the age is measured backwards, which means that `age=0` is actually the last (most recent) observation. Is the `age` equally spaced? Yes, it is equi-spaced by 20 years.
+
+```{r}
+#| label: diff-age
+unique(diff(icecore$age))
+```
+
+Let's rearrange the data and add an index.
+
+```{r}
+#| label: data-df
+icecore_df <- icecore %>% 
+  mutate(time=-age, .before = 1) %>% 
+  select(-age) %>% 
+  arrange(time) 
+```
+
+@fig-response shows the response variables
+
+```{r}
+#| label: fig-response
+#| fig-width: 7
+#| fig-height: 5
+#| out-width: 80%
+#| warning: false
+#| fig-cap: "Response variables over time"
+icecore_df %>% 
+  select(time, EDML, GRIP) %>% 
+  pivot_longer(-time, names_to="core", values_to="value") %>%
+  ggplot()+
+  geom_line(aes(time,value, color=core))+
+  facet_wrap(vars(core), ncol=1)
+```
+
+There does not appear to be a clear seasonality (after all the data is sampled every 20 years), but we can clearly see that there's a trend. 
+
+# Train-test split
+
+First, we will create the training and test set, separating the period for which we don't have the response variable, but have the predictor variables
+
+```{r}
+#| label: train-test
+idx_GRIP_train <- !is.na(icecore_df$GRIP)
+idx_EDML_train <- !is.na(icecore_df$EDML)
+
+GRIP_train_df <- icecore_df %>%
+  select(-EDML) %>% 
+  filter(idx_GRIP_train)
+GRIP_train_ts <- GRIP_train_df %>%  
+  as_tsibble(index = time)
+
+GRIP_test_df <- icecore_df %>% 
+  select(-GRIP, -EDML) %>% 
+  filter(!idx_GRIP_train) 
+GRIP_test_ts <- GRIP_test_df %>%
+  as_tsibble(index = time)
+
+EDML_train_df <- icecore_df %>%
+  select(-GRIP) %>% 
+  filter(idx_EDML_train)
+EDML_train_ts <- EDML_train_df %>% 
+  as_tsibble(index = time)
+
+EDML_test_df <- icecore_df %>% 
+  select(-GRIP, -EDML) %>% 
+  filter(!idx_EDML_train) 
+EDML_test_ts <- EDML_test_df %>%
+  as_tsibble(index = time)
+
+```
+
+# Modeling approaches
+
+The methods we used in class up to this point are intended for the data that is **independent and identically distributed** (IID). This is the fundamental assumption behind the linear regression, correlation and the hypothesis testing (the theory behind the confindence intervals and p-values). The alternative approach would be to consider this data from the point of view of **time-indexed series** (TS) of observations, where the observations are in fact not independent. Both approaches are valuable for learning and we will adopt each one of them in the sections that follow.
+
+# IID
+
+In this approach we only focus on the observation data in `EDML`.
+
+## Antarctica (EDML) ice core
+
+### Regression model 
+
+First, we need to address the possible time autocorrelation introduced by the response variable into the error term of our linear models. As can be observed on @fig-acf-edml the time autocorrelation in `EDML` data is significant until after lag 3 (i.e. 3 data points away from the sampling point).
+
+```{r}
+#| label: fig-acf-edml
+#| fig-cap: "Autocorrelation in the EDML variable"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+acf(EDML_train_df$EDML, main='EDML data')
+```
+
+We can attempt to reduce this by binning the data via taking the average of every 3 data points. Below is summary of the processed data set. It can be observed that the mean production rate of 10Be is lower in the troposphere compared to the stratosphere. Particularly, the production rate of the stratosphere is significant high at the mid and high latitudes.
+
+```{r}
+#| label: edml-train-summary
+EDML_dat <- EDML_train_df %>% 
+  group_by(idx=row_number() %/% 3) %>%
+  summarise_all(mean) %>% 
+  select(-idx, -time)
+# Summary
+summary(EDML_dat)
+```
+Correlation table of the data:
+
+```{r}
+#| label: edml-dat-correlations
+cor(EDML_dat)
+```
+### Simple linear regression
+
+We select `Q_stra_mid` to build a simple linear regression to predict the `EDML` data. The reasons are that (1) it highly correlated to `EDML` and (2) a lot of 10Be is produced here.
+
+```{r}
+#| label: edml-qstramid-model
+q_stra_mid_lm <- lm(EDML ~ Q_stra_mid, data=EDML_dat)
+summary(q_stra_mid_lm)
+```
+
+The independent variable is significant and can explain ~78% of the variation as indicated by $R^2$. Below are the confidence intervals for the coefficient estimates.
+
+```{r}
+#| label: edml-qstramid-confint
+confint(q_stra_mid_lm)
+```
+
+Here, we should be careful when interpreting the coefficients. Since the `EDML` data was normalized, we cannot interpret the absolute value of the coefficients. If we take this literally, this would mean that 1 atom of 10Be produce in the mid latitude stratosphere corresponds to 3 atoms of 10Be coming to the Antarctica. This makes no sense! However, we can conclude that there is a strong positively linear relation between `Q_stra_mid` and `EDML`.
+The response variable is plotted versus the independent variable below (@fig-qstramid-intervals). The plot includes the linear prediction (black solid line), its confidence interval (grey envelope) and its prediction interval (dashed black lines).
+
+```{r}
+#| label: fig-qstramid-intervals
+#| fig-cap: "Prediction interval and confidence interval for the `Q_stra_mid` model"
+#| message: false
+#| warning: false
+
+# Generate prediction interval
+X <- data.frame(Q_stra_mid=seq(min(EDML_dat$Q_stra_mid),max(EDML_dat$Q_stra_mid),0.05))
+pred_int <- cbind(X,predict(q_stra_mid_lm,X,interval="prediction"))
+# Plot
+ggplot(data=EDML_dat, aes(x=Q_stra_mid,y=EDML)) + 
+  geom_point(alpha=0.7, color='blue') +
+  geom_smooth(method="lm", color='black') +
+  geom_line(data=pred_int,aes(x=Q_stra_mid,y=upr), color='black', linetype=2) + 
+  geom_line(data=pred_int,aes(x=Q_stra_mid,y=lwr), color='black', linetype=2) 
+```
+
+The linear model works quite well. Let's assess the model fit. @fig-edml-pred-residuals shows that there is no time autocorrelation or any trend in the residuals.
+
+```{r}
+#| label: fig-edml-pred-residuals
+#| fig-cap: "`Q_stra_mid` model"
+#| fig-subcap: 
+#|  - "Residuals plot"
+#|  - "Autocorrelation of residuals"
+#| layout-ncol: 2
+EDML_pred_simple <- EDML_dat %>%
+  select(EDML,Q_stra_mid) %>%
+  mutate(fit=predict(q_stra_mid_lm,data=EDML_dat)) %>%
+  mutate(res=residuals(q_stra_mid_lm)) %>%
+  mutate(rstudent=rstudent(q_stra_mid_lm))
+# Plot
+ggplot(data=EDML_pred_simple, aes(x=as.numeric(row.names(EDML_pred_simple)),y=res)) + 
+  geom_point() + geom_line() + labs(x='Index', y='Residual')
+acf(EDML_pred_simple$res, main="")
+```
+
+The variance of error terms seems fine (see @fig-edml-fit-residuals for the standard and studentized residuals, respectively).
+
+```{r}
+#| label: fig-edml-fit-residuals
+#| fig-cap: "Residuals"
+#| fig-subcap: 
+#|   - "Standard residuals"
+#|   - "Studentized residuals"
+#| layout-ncol: 2
+#| message: false
+ggplot(data=EDML_pred_simple, aes(x=fit,y=res)) + 
+  geom_point() + geom_smooth(method="lm")
+ggplot(data=EDML_pred_simple, aes(x=fit,y=rstudent)) + 
+  geom_point() + geom_smooth(method="lm")
+```
+
+### Polynomial regression
+
+Let's try to fit the data with a simple polynomial regression.
+
+```{r}
+#| label: poly-mod-summary
+# Fit
+q_stra_mid_poly <- lm(EDML ~ poly(Q_stra_mid,2),
+                      data=EDML_pred_simple)
+summary(q_stra_mid_poly)
+```
+This model does not help explain more variation in the EDML data and the coefficients are not significant. The plot below with the fitted model also shows that the relation is rather not polynomial. 
+
+```{r}
+#| label: poly-mod-intervals
+#| fig-cap: "Prediction and confidence intervals for the polynomial model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+X <- data.frame(Q_stra_mid=seq(0.6,1.1,0.1),
+                Q_stra_mid2=seq(0.6,1.1,0.1)**2)
+pred_int <- cbind(X,predict(q_stra_mid_poly,X,interval="prediction"))
+conf_int <- cbind(X,predict(q_stra_mid_poly,X,interval="confidence"))
+# Plot
+ggplot(data=EDML_pred_simple, aes(x=Q_stra_mid,y=EDML)) + 
+  geom_point(alpha=0.7, color='blue') +
+  geom_line(data=pred_int,aes(x=Q_stra_mid,y=fit)) + 
+  geom_line(data=conf_int,aes(x=Q_stra_mid,y=upr), color='orange') + 
+  geom_line(data=conf_int,aes(x=Q_stra_mid,y=lwr), color='orange') +  
+  geom_line(data=pred_int,aes(x=Q_stra_mid,y=upr), color='black', linetype=2) + 
+  geom_line(data=pred_int,aes(x=Q_stra_mid,y=lwr), color='black', linetype=2) 
+```
+
+### Multiple regression model
+
+Let's try to use all of the variables to predict EDML.
+
+```{r}
+#| label: lm-mod-all-summary
+all_lm <- lm(EDML ~ ., data=EDML_dat)
+summary(all_lm)
+```
+
+This multi-linear model does not help explain more variation in the EDML data and none of the coefficients are significant. We believe that only a subset of the variables are useful since the variables are strongly correlated among themselves.
+Let's only select 2 regions in the stratosphere that are relevant and highly correlated to the EDML data `Q_stra_mid` and `Q_stra_high`.
+
+```{r}
+#| label: lm-mod-allstra-summary
+stra_lm <- lm(EDML ~ Q_stra_mid + Q_stra_high, data=EDML_dat)
+summary(stra_lm)
+```
+
+This multiple linear model can explain 80% variation in the observation data which is slightly better than the simple model. Both of the independent variables are relevant.
+
+```{r}
+#| label: lm-mod-allstra-confint
+confint(stra_lm)
+```
+
+And again the residual looks fine (@fig-lm-allstra-residuals and @fig-lm-fit-residuals).
+
+```{r}
+#| label: fig-lm-allstra-residuals
+#| layout-ncol: 2
+#| fig-cap: "Residuals from the multivariate model"
+#| fig-subcap: 
+#|   - "Residuals"
+#|   - "Autocorrelation of residuals"
+EDML_pred_multi <- EDML_dat %>%
+  select(EDML,Q_stra_mid,Q_stra_high) %>%
+  mutate(fit=predict(stra_lm,data=EDML_dat)) %>%
+  mutate(res=residuals(stra_lm)) %>%
+  mutate(rstudent=rstudent(stra_lm))
+# Plot
+ggplot(data=EDML_pred_multi, aes(x=as.numeric(row.names(EDML_pred_multi)),y=res)) + 
+  geom_point() + geom_line() + labs(x='Index', y='Residual')
+acf(EDML_pred_multi$res, main="")
+```
+
+
+```{r}
+#| label: fig-lm-fit-residuals
+#| fig-cap: "Residuals from the multivariate model"
+#| fig-subcap: 
+#|   - "Standard residuals"
+#|   - "Studentized residuals"
+#| layout-ncol: 2
+#| message: false
+ggplot(data=EDML_pred_multi, aes(x=fit,y=res)) + 
+  geom_point() + geom_smooth(method = "lm")
+ggplot(data=EDML_pred_multi, aes(x=fit,y=rstudent)) + 
+  geom_point() + geom_smooth(method="lm")
+```
+
+
+The plot below shows the prediction of EDML by `Q_stra_mid` where `Q_stra_high values = 1.5, 2.0` and `2.5` (indicated by the numbers below the prediction lines).
+
+```{r}
+#| label: fig-lm-predictions1
+#| fig-cap: "Predictions for the multivariate model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+# Generate prediction data
+X15 <- data.frame(Q_stra_mid=seq(0.6,1.1,0.1),
+                Q_stra_high=rep(1.5,6))
+X20 <- data.frame(Q_stra_mid=seq(0.6,1.1,0.1),
+                Q_stra_high=rep(2.0,6))
+X25 <- data.frame(Q_stra_mid=seq(0.6,1.1,0.1),
+                Q_stra_high=rep(2.5,6))
+pred_int15 <- cbind(X15,predict(stra_lm,X15,interval="prediction"))
+pred_int20 <- cbind(X20,predict(stra_lm,X20,interval="prediction"))
+pred_int25 <- cbind(X25,predict(stra_lm,X25,interval="prediction"))
+# Plot
+ggplot(data=EDML_pred_multi, aes(x=Q_stra_mid,y=EDML)) + 
+  geom_point(alpha=0.7, color='blue') +
+  geom_line(data=pred_int15,aes(x=Q_stra_mid,y=fit), linetype=2) +
+  geom_line(data=pred_int20,aes(x=Q_stra_mid,y=fit), linetype=2) + 
+  geom_line(data=pred_int25,aes(x=Q_stra_mid,y=fit), linetype=2) +
+  geom_text(x=1.1,y=4.7,label="2.5") + 
+  geom_text(x=1.1,y=5.1,label="2.0") + 
+  geom_text(x=1.1,y=5.4,label="1.5") 
+```
+
+The plot below shows the prediction of EDML by `Q_stra_high` where `Q_stra_mid values = 0.7, 0.9` and `1.1` (indicated by the numbers below the prediction lines).
+
+```{r}
+#| label: fig-lm-predictions2
+#| fig-cap: "Predictions for the multivariate model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+# Generate prediction data
+# Generate prediction data
+X07 <- data.frame(Q_stra_high=seq(1.3,2.7,0.1),
+                Q_stra_mid=rep(0.7,15))
+X09 <- data.frame(Q_stra_high=seq(1.3,2.7,0.1),
+                Q_stra_mid=rep(0.9,15))
+X11 <- data.frame(Q_stra_high=seq(1.3,2.7,0.1),
+                Q_stra_mid=rep(1.1,15))
+
+pred_int07 <- cbind(X07,predict(stra_lm,X07,interval="prediction"))
+pred_int09 <- cbind(X09,predict(stra_lm,X09,interval="prediction"))
+pred_int11 <- cbind(X11,predict(stra_lm,X11,interval="prediction"))
+# Plot
+ggplot(data=EDML_pred_multi, aes(x=Q_stra_high,y=EDML)) + 
+  geom_point(alpha=0.7, color='blue') +
+  geom_line(data=pred_int07,aes(x=Q_stra_high,y=fit), linetype=2) +
+  geom_line(data=pred_int09,aes(x=Q_stra_high,y=fit), linetype=2) + 
+  geom_line(data=pred_int11,aes(x=Q_stra_high,y=fit), linetype=2) +
+  geom_text(x=1.3,y=3.5,label="0.7") + 
+  geom_text(x=1.3,y=4.5,label="0.9") + 
+  geom_text(x=1.3,y=5.5,label="1.1") 
+```
+
+The plots show the negative correlation between `Q_stra_high` and `EDML`. However, by looking at the second plot (`Q_stra_high` vs `EDML`) the correlation is rather positive. So despite the fact that the multi-linear model can explain extra variation, we suggest to use the simple linear regression with one variable.
+
+### PCA
+
+Since the independent variables are strongly correlated we believe that PCA will help in combining them into new useful variables.
+PC loadings:
+
+```{r}
+#| label: pca-summary
+pca_dat <- EDML_dat %>%
+  select(Q_stra_low,Q_stra_mid,Q_stra_high,
+         Q_trop_low,Q_trop_mid,Q_trop_high)
+pr.out <- prcomp(pca_dat, scale = FALSE)
+pr.out$rotation
+```
+
+How many PCs do we need (@fig-pca-elbow)?
+
+```{r}
+#| label: fig-pca-elbow
+#| fig-cap: "PCA component explained  variance plot"
+#| out-width: 80%
+#| fig-width: 6
+#| fig-height: 4
+
+pr.var <- pr.out$sdev^2
+pve <- pr.var / sum(pr.var)
+df_pve <- data.frame(pve=pve,PC=c(1:6))
+df_pve %>% ggplot(aes(x=PC,y=pve))+
+  geom_point(size=3)+
+  geom_line() + 
+  labs(y="Proportion of variance explained") +  
+  theme(text=element_text(size=16))
+```
+
+So most of the variation in our independent variables can be explained by PC1 and PC2 (to a lesser degree). Note that we used scale = FALSE to account for the differences in the amount of 10Be produced in different regions. PC1 is dominated by Q_stra_high and Q_stra_mid as we expected. PC2 contains the variations in Q_stra_mid that are negatively correlated with Q_stra_high. Let's look at the relationship between PC1, PC2 and EDML (@fig-pca-edml).
+
+```{r}
+#| label: fig-pca-edml
+#| fig-cap: "PCA components vs the target"
+#| fig-subcap: 
+#|   - "PC1 against the EDML"
+#|   - "PC2 against the EDML"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+#| message: false
+#| warning: false
+#| layout-ncol: 2
+EDML_dat$PC1 <- pr.out$x[,1]
+EDML_dat$PC2 <- pr.out$x[,2]
+ggplot(data=EDML_dat, aes(x=PC1,y=EDML)) + 
+  geom_point() + geom_smooth(method='lm')
+ggplot(data=EDML_dat, aes(x=PC2,y=EDML)) + 
+  geom_point() + geom_smooth(method='lm')
+```
+
+
+We can see that PC1 is positively correlated with EDML while PC2 is negatively correlated with EDML. Let's predict EDML with a multi-linear regression model consists of PC1 and PC2
+
+```{r}
+#| label: lm-edml-pca2-summary
+pca_lm <- lm(EDML ~ PC1 + PC2, data=EDML_dat)
+summary(pca_lm)
+```
+
+```{r}
+#| label: lm-edml-pca2-confint
+confint(pca_lm)
+```
+The negative coefficient of PC2 is now making sense. PC2 collects the variation in Q_stra_mid that is negatively correlated with EDML. Again the residual looks fine (@fig-edml-pca2-residuals1 and @fig-edml-pca2-residuals2).
+
+```{r}
+#| label: fig-edml-pca2-residuals1
+#| fig-cap: "Linear fit with PCA 1 and 2"
+#| fig-subcap: 
+#|   - "Residuals"
+#|   - "Autocorrelation"
+#| layout-ncol: 2
+#| warning: false
+#| message: false
+EDML_pred_pca <- EDML_dat %>%
+  select(EDML,PC1,PC2) %>%
+  mutate(fit=predict(pca_lm,data=EDML_dat)) %>%
+  mutate(res=residuals(pca_lm)) %>%
+  mutate(rstudent=rstudent(pca_lm))
+# Plot
+ggplot(data=EDML_pred_pca, aes(x=as.numeric(row.names(EDML_pred_pca)),y=res)) + 
+  geom_point() + geom_line() + labs(x='Index', y='Residual') 
+acf(EDML_pred_pca$res,main="")
+```
+
+```{r}
+#| label: fig-edml-pca2-residuals2
+#| fig-cap: "Linear fit with PCA 1 and 2"
+#| fig-subcap: 
+#|   - "Residuals"
+#|   - "Studentized residuals"
+#| layout-ncol: 2
+#| warning: false
+#| message: false
+ggplot(data=EDML_pred_pca, aes(x=fit,y=res)) + 
+  geom_point() + geom_smooth(method="lm")
+
+ggplot(data=EDML_pred_pca, aes(x=fit,y=rstudent)) + 
+  geom_point() + geom_smooth(method="lm")
+```
+
+# TS
+
+## Greenland (GRIP) ice core
+
+### Simple Forecasting
+
+We begin our exploration with simple Time-Series Linear model just using the trend to forecast. We try the linear and the piece-wise trend.
+
+```{r}
+#| label: GRIP-fc
+trend_mod_GRIP <- GRIP_train_ts %>%
+  model(linear=TSLM(GRIP ~trend()),
+        piecewise=TSLM(GRIP~trend(knots=c(-7200,-2200)))
+        )
+
+fc_trend_mod_GRIP <- trend_mod_GRIP %>% 
+  fabletools::forecast(h=20)
+```
+
+```{r}
+#| label: fig-grip-trend-fc
+#| fig-cap: "Trend models and forecasts"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+GRIP_train_ts %>% 
+  autoplot(GRIP)+
+  geom_line(data=fitted(trend_mod_GRIP),
+            aes(y=.fitted, color=.model))+
+  autolayer(fc_trend_mod_GRIP, alpha=0.6, level=95)
+```
+
+### Smoothing
+
+Lets try some time series smoothing First, here's a 9 period moving average. Pretty strong trend.
+
+```{r}
+#| label: fig-grip-ma9
+#| fig-cap: "Simple 9-period moving average"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+#| message: false
+#| warning: false
+GRIP_train_ts %>% 
+  mutate(`GRIP-9-MA`=slider::slide_dbl(GRIP, mean, 
+             .before=4, .after=4, .complete=TRUE)) %>% 
+  autoplot(GRIP)+
+  geom_line(aes(y=`GRIP-9-MA`), color="orange")
+```
+
+Right now all 9 points in the smoothing window are equally weighted. Exponential smoothing creates a kernel of weights which attenuate away from the current point backward. Here's a model with simple exponential smoothing.
+
+```{r}
+#| label: fig-ets
+#| fig-cap: "Simple exponential smoothing"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+es_mod_GRIP <- GRIP_train_ts %>% 
+  model(ETS(GRIP~error("A")+trend("N")))
+fc_es_mod_GRIP <- es_mod_GRIP %>% 
+  fabletools::forecast(h=20)
+
+fc_es_mod_GRIP %>% 
+  autoplot(GRIP_train_ts)+
+  geom_line(data=augment(es_mod_GRIP),aes(y=.fitted), col="orange")
+```
+
+Let's try and incorporate the trend. This is using Holt's linear trend method.
+
+```{r}
+#| label: fig-ets-trend
+#| fig-cap: "Simple exponential smoothing with trend (AAN model)"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+es_mod_GRIP <- GRIP_train_ts %>% 
+  model(AAN=ETS(GRIP~error("A")+trend("A")))
+fc_es_mod_GRIP <- es_mod_GRIP %>% 
+  fabletools::forecast(h=20)
+
+fc_es_mod_GRIP %>% 
+  autoplot(GRIP_train_ts)+
+  geom_line(data=augment(es_mod_GRIP),aes(y=.fitted), col="orange")
+```
+
+As you can see the forecast picked up the downward sloping global linear trend. 
+
+Damped linear trend method corrects the infinite Holt's trend projected into the future and instead attenuates the trend towards a flat line in the remote future. Let's add it and compare.
+
+```{r}
+#| label: fig-ets-dtrend
+#| fig-cap: "AAN vs AAdN exponential smoothing"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+es_mod_GRIP <- GRIP_train_ts %>% 
+  model(AAN=ETS(GRIP~error("A")+trend("A")),
+        AAdN=ETS(GRIP~error("A")+trend("Ad", phi=0.9)))
+fc_es_mod_GRIP <- es_mod_GRIP %>% 
+  fabletools::forecast(h=20)
+
+fc_es_mod_GRIP %>% 
+  autoplot(GRIP_train_ts)+
+  geom_line(data=augment(es_mod_GRIP),aes(y=.fitted), col="orange")
+```
+
+
+### Time series regression
+
+Let's try to build a regression model. The time-indexed regression model of the form
+
+$$y_t=\beta_0+\beta_1x_{1,t}+\beta_2x_{2,t}+\dots+\beta_kx_{k,t}+\varepsilon_t.$$
+
+
+It makes the following assumptions about the errors $(\varepsilon_1,\varepsilon_2,\dots,\varepsilon_T)$:
+
+- errors are unbiased (having a mean of zero)
+- errors are not autocorrelated (there's no remaining trend)
+- errors are not related to the preditors (all signal has been extracted)
+- errors are normally distributed with constant variance (for the purposes of making predictive intervals)
+
+```{r}
+#| label: tslm-mod-summary
+all_mod_GRIP  <- GRIP_train_ts %>%  
+  model(TSLM(GRIP~Q_trop_high+Q_trop_mid+Q_trop_low+
+               Q_stra_high+Q_stra_mid+Q_stra_low)) 
+report(all_mod_GRIP)
+```
+
+None of the predictors is significant. How nice! Let's see the predicted values
+
+```{r}
+#| label: fig-grip-tslm-fitted-ts
+#| fig-cap: "Fitted values for TSLM model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+augment(all_mod_GRIP) %>% 
+  ggplot(aes(x=time))+
+  geom_line(aes(y=GRIP, color="Data"))+
+  geom_line(aes(y=.fitted, color="Fitted"))+
+  scale_color_manual(values=c(Data="black", Fitted="orange"))
+```
+
+```{r}
+#| label: fig-grip-tslm-target-fitted
+#| fig-cap: "Targets vs fitted values for TSLM model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+augment(all_mod_GRIP) %>% 
+  ggplot(aes(x=GRIP,y=.fitted))+
+  geom_point()+
+  geom_abline(intercept = 0, slope = 1)
+```
+
+
+```{r}
+#| label: fig-grip-tslm-residuals
+#| fig-cap: "Residuals for TSLM model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+all_mod_GRIP %>% gg_tsresiduals()
+```
+
+The plot shows significant autocorrelation in the residuals. We can try and plot the residuals against the covariates.
+
+```{r}
+#| label: fig-grip-tslm-predictor-fitted
+#| fig-cap: "Predictors vs fitted values for TSLM model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+#| message: false
+#| warning: false
+icecore_df %>% 
+  left_join(residuals(all_mod_GRIP), by="time") %>% 
+  pivot_longer(starts_with("Q_"), names_to = "covariate", values_to="value") %>% 
+  ggplot(aes(x=value, y=.resid))+
+  geom_point()+
+  facet_wrap(vars(covariate), scales = "free_x")
+```
+
+Lets plot our residuals against the fitted values
+
+```{r}
+#| label: fig-grip-tslm-resid-fitted
+#| fig-cap: "Residuals vs fitted values for TSLM model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+#| message: false
+#| warning: false
+augment(all_mod_GRIP) %>% 
+  ggplot(aes(x=.fitted, y=.resid))+
+  geom_point()
+```
+
+```{r}
+#| label: mod-grip-tslm-perf
+glance(all_mod_GRIP) %>% 
+  select(adj_r_squared, CV, AIC, AICc, BIC)
+```
+
+```{r}
+#| label: fig-grip-tslm-fc
+#| fig-cap: "Forecast for TSLM model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+fc_all_mod_GRIP <- fabletools::forecast(all_mod_GRIP,
+                                        new_data=GRIP_test_ts)
+GRIP_train_ts %>% 
+  autoplot(GRIP)+
+  autolayer(fc_all_mod_GRIP)
+```
+
+### ARIMA regression
+
+There seems to be quite a lot of signal left in the error term of our regression. We can try to extract this signal by fitting an ARIMA model to the residuals. Let's start with a single covariate:
+
+$$y_t=\beta_0+\beta_1x_t+\eta_t$$
+
+where $\eta_t$ is an ARIMA model. The order of the model can be specified explicitly, but can also be left up to the engine to select.
+
+```{r}
+#| label: mod-grip-arima-report
+ARIMA_mod_GRIP <- GRIP_train_ts %>% 
+  model(ARIMA(GRIP~Q_stra_high))
+report(ARIMA_mod_GRIP)
+```
+
+The function picked the linear model with ARIMA(2,1,2) errors for us. Note that the intercept is gone due to the differencing. The way we can interpret these coefficients is:
+
+$$
+\begin{gathered}
+y_t=1.153x_t+ \eta_t,\\
+\eta_t=-0.023\eta_{t-1}+0.2080\eta_{t-2}+\varepsilon_t-0.2503\varepsilon_{t-1}-0.6374\varepsilon_{t-2},\\
+\varepsilon_t \sim NID(0,0.05513)
+\end{gathered}
+$$
+
+```{r}
+#| label: fig-grip-arima-residuals
+#| fig-cap: "Residuals plot for ARIMA model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+ARIMA_mod_GRIP %>% gg_tsresiduals()
+augment(ARIMA_mod_GRIP) %>% 
+  features(.innov, ljung_box, dof=3, lag=8)
+```
+This is really good! The residuals looks nice and the forecast should be sensible. Lets predict!
+
+```{r}
+#| label: fig-grip-arima-fc
+#| fig-cap: "Forecast for ARIMA model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+fabletools::forecast(ARIMA_mod_GRIP, new_data=GRIP_test_ts) %>% 
+  autoplot(GRIP_train_ts)+
+  labs("ARIMA regression forecast")
+```
+
+We should now see if we can improve the goodness of fit by adding more covariates. As you can remember from the correlogram plot, the covariates from the same latitude (high, med, low) vere strongly correlated. Perhaps we could add only one of each.
+
+```{r}
+#| label: mods-grip-arimas
+ARIMA_mods <-GRIP_train_ts %>% 
+  model("stra_high"=ARIMA(GRIP~Q_stra_high),
+        "trop_high"=ARIMA(GRIP~Q_trop_high),
+        "all_stra"=ARIMA(GRIP~Q_stra_high+Q_stra_mid+Q_stra_low),
+        "all_trop"=ARIMA(GRIP~Q_trop_high+Q_trop_mid+Q_trop_low),
+        "all_high"=ARIMA(GRIP~Q_trop_high+Q_stra_high),
+        "all_highmid"=ARIMA(GRIP~Q_trop_high+Q_stra_high+Q_trop_mid+Q_stra_mid),
+        "all_highlow"=ARIMA(GRIP~Q_trop_high+Q_stra_high+Q_trop_low+Q_stra_low),
+        "all"=ARIMA(GRIP~Q_trop_high+Q_stra_high+Q_trop_mid+Q_stra_mid+Q_stra_low+Q_trop_low)
+        )
+glance(ARIMA_mods)
+```
+
+Looking at the AIC or the AICc, the best model seems to be with the variables from high latitude ("Allhigh"), while BIC (which penalizes model complexity a little more) favors our original model with a single high latitude stratosphere variable("Strahigh").
+
+Lets look at the "Allhigh" model details.
+
+```{r}
+#| label: mod-grip-arima-allhigh-report
+GRIP_allhigh_mod <- select(ARIMA_mods, "all_high")
+
+GRIP_allhigh_mod %>% report()
+```
+Lets look at the residuals.
+
+```{r}
+#| label: fig-grip-arima-allhigh-residuals
+#| fig-cap: "Residuals plot for Allhigh ARIMA model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+gg_tsresiduals(GRIP_allhigh_mod)
+```
+
+
+Just awesome! No autocorrelation in residuals, nice distribution. No obvious pattern. A few more diagnostic plots to check the residuals.
+
+```{r}
+#| label: fig-grip-arima-allhigh-target-fitted
+#| fig-cap: "Target vs fitted for Allhigh ARIMA model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+augment(GRIP_allhigh_mod) %>% 
+  ggplot(aes(x=GRIP,y=.fitted))+
+  geom_point()+
+  geom_abline(intercept = 0, slope = 1)
+```
+
+```{r}
+#| label: fig-grip-arima-allhigh-resid-predictors
+#| fig-cap: "Residuals vs predictors for Allhigh ARIMA model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+#| message: false
+#| warning: false
+icecore_df %>% 
+  left_join(residuals(GRIP_allhigh_mod), by="time") %>% 
+  pivot_longer(starts_with("Q_"), names_to = "covariate", values_to="value") %>% 
+  ggplot(aes(x=value, y=.resid))+
+  geom_point()+
+  facet_wrap(vars(covariate), scales = "free_x")
+```
+
+Lets plot our residuals against the fitted values
+
+```{r}
+#| label: fig-grip-arima-allhigh-resid-fitted
+#| fig-cap: "Residuals vs fitted for Allhigh ARIMA model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+augment(GRIP_allhigh_mod) %>% 
+  ggplot(aes(x=.fitted, y=.resid))+
+  geom_point()
+```
+
+No particular pattern here. All good, it seems.
+
+### Cross-validation
+
+We will use time series cross-validation to decide which model to use for prediction. We cross-validate the performance of the simple "Strahigh" model against the more complex "Allhigh".
+
+```{r}
+#| label: mod-grip-arima-cv
+GRIP_train_stretched <- GRIP_train_ts %>% 
+  stretch_tsibble(.init=100, .step=50) 
+GRIP_cv_mod <- GRIP_train_stretched %>% 
+  model("strahigh"=ARIMA(GRIP~0+pdq(2,1,2)+Q_stra_high),
+        "allhigh"=ARIMA(GRIP~0+pdq(2,1,2)+Q_stra_high+Q_trop_high))
+```
+
+We now prepare the validation sets and predict on them, calculating the performance. We will predict 16 observations at a time (the size of our test set).
+
+```{r}
+#| label: mod-grip-cv-perf
+GRIP_cv_valid_ts <- new_data(GRIP_train_stretched, n=16) %>% 
+  left_join(GRIP_train_ts, by="time")
+
+GRIP_cv_mod_fc <- fabletools::forecast(GRIP_cv_mod, new_data=GRIP_cv_valid_ts) %>% 
+  group_by(.id, .model) %>% 
+  mutate(h=row_number()) %>% 
+  ungroup() %>% 
+  as_fable(response="GRIP", distribution=GRIP)
+
+GRIP_cv_mod_fc %>% 
+  fabletools::accuracy(GRIP_train_ts, by=c("h", ".model")) %>% 
+  group_by(.model, .type) %>% 
+  summarize_all(mean)
+```
+The original model is better in every respect! BIC was right (as always).
+
+Let's predict using the `Q_stra_high` variable.
+
+```{r}
+#| label: fig-grip-arima-strahigh-fc
+#| fig-cap: "Forecast for Strahigh ARIMA model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+ARIMA_mod_GRIP %>% 
+  fabletools::forecast(new_data=GRIP_test_ts) %>% 
+  autoplot(GRIP_train_ts)
+```
+
+## Antarctica (EDML) ice core
+
+### ARIMA regression
+
+Let's save ourselves some time and go straight to the ARIMA regression for EDML response variable
+
+```{r}
+#| label: mod-edml-arimas
+all_mod_EDML <- EDML_train_ts %>% 
+  model("stra_low"=ARIMA(EDML~Q_stra_low),
+        "trop_low"=ARIMA(EDML~Q_trop_low),
+        "all_stra"=ARIMA(EDML~Q_stra_high+Q_stra_mid+Q_stra_low),
+        "all_trop"=ARIMA(EDML~Q_trop_high+Q_trop_mid+Q_trop_low),
+        "all_low"=ARIMA(EDML~Q_stra_low+Q_trop_low),
+        "all_lowmid"=ARIMA(EDML~Q_stra_low+Q_trop_low+Q_stra_mid+Q_trop_mid),
+        "all_lowhigh"=ARIMA(EDML~Q_stra_low+Q_trop_low+Q_stra_high+Q_trop_high),
+        "all"=ARIMA(EDML~Q_stra_high+Q_stra_mid+Q_stra_low+
+                      Q_trop_high+Q_trop_mid+Q_trop_low))
+glance(all_mod_EDML)
+```
+
+BIC prefers the "lowmid" model, while the AIC favors the "lowhigh" model.
+
+Let's pick one of them and look at the residuals.
+
+```{r}
+#| label: fig-edml-arima-resid
+#| fig-cap: "Residuals plot for Lowmid ARIMA model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+all_mod_EDML %>% select("all_lowmid") %>% 
+  gg_tsresiduals()
+```
+
+Residuals look largely ok with only two periods "sticking out" of the confidence bands: at lags 14 and 22 (no obvious reason why). I am concerned about the non-stationary variance of the residuals and, therefore, slightly irregular shape of the error distribution. 
+
+```{r}
+#| label: mod-edml-arima-lowmid-report
+all_mod_EDML %>% select("all_lowmid") %>% 
+  report()
+```
+
+This is a pretty complex model: 4 covariates, 4 lags, and 2 moving averages. 
+
+The alternative model's residuals
+
+```{r}
+#| label: fig-edml-arima-lowhigh-resid
+#| fig-cap: "Residuals plot for Lowhigh ARIMA model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+all_mod_EDML %>% select("all_lowhigh") %>% 
+  gg_tsresiduals()
+```
+
+Here we have a significant autoregression at the lag 7 and 22.
+
+```{r}
+#| label: mod-edml-arima-lowhigh-report
+all_mod_EDML %>% select("all_lowhigh") %>% 
+  report()
+```
+This is somewhat simpler model with 3 lags, 1 moving average and 4 variables.
+
+### Cross-validation
+
+We will employ the "stretching window" cross-validation scheme to assess the performance of the selected number of models on the training data (effectively treating part of it as a validation set). Here we will set the initial training set to be 100 observations and then at every iteration we will add 61 to the training set, always predicting 61 observations (equivalent to the size of the test set we are trying to predict).
+
+```{r}
+#| label: mod-edml-stretched
+EDML_stretched <- EDML_train_ts %>% 
+  stretch_tsibble(.init=100, .step=61) 
+EDML_cv_mod <- EDML_stretched %>% 
+  model("all_lowmid"=ARIMA(EDML~0+pdq(4,0,2)+Q_stra_low+Q_trop_low+Q_stra_mid+Q_trop_mid),
+        "all_lowhigh"=ARIMA(EDML~0+pdq(3,0,1)+Q_stra_low+Q_trop_low+Q_stra_high+Q_trop_high))
+```
+
+```{r}
+#| label: mod-edml-cv-compare
+#| warning: false
+EDML_cv_valid_ts <- new_data(EDML_stretched, n=61) %>% 
+  left_join(EDML_train_ts, by="time")
+
+EDML_cv_mod_fc <- fabletools::forecast(EDML_cv_mod, new_data=EDML_cv_valid_ts) %>% 
+  group_by(.id, .model) %>% 
+  mutate(h=row_number()) %>% 
+  ungroup() %>% 
+  as_fable(response="EDML", distribution=EDML)
+
+EDML_cv_mod_fc %>% fabletools::accuracy(EDML_train_ts, by=c("h", ".model")) %>% 
+  group_by(.model, .type) %>% 
+  summarize_all(mean)
+```
+
+The "lowhigh" is slightly better on all metrics. 
+
+```{r}
+#| label: fig-edml-arima-lowhigh-fc
+#| fig-cap: "Forecast from Lowhigh ARIMA model"
+#| out-width: 80%
+#| fig-width: 7
+#| fig-height: 5
+all_mod_EDML %>% select(all_lowhigh) %>% 
+  fabletools::forecast(new_data=EDML_test_ts) %>% 
+  autoplot(EDML_train_ts)
+```
+
