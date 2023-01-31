@@ -1,21 +1,76 @@
 ---
-title: "Project 1"
-subtitle: "Additional assignment"
-author: "Dmytro Perepolkin"
-format: html
+title: "Predicting beta-carotene content in plasma"
+subtitle: "Project 2"
+author: 
+ - name: Hoang Long Nguyen
+   affiliations:
+     - name: Lund University
+       department: Department of Geology
+       address: Sölvegatan 12, S-223 62 Lund, Sweden
+ - name: Dmytro Perepolkin
+   affiliations:
+     - name: Lund University
+       department: Centre for Environmental and Climate Science
+       address: Sölvegatan 37, S-223 62 Lund, Sweden
 bibliography: Project1_plasma.bib
+format: 
+  titlepage-pdf:
+    documentclass: scrbook
+    classoption: ["oneside", "open=any"]
+    number-sections: true
+    titlepage: classic-lined 
+    titlepage-logo: "img/logo.png"
+    titlepage-footer: |
+      Group 1
+      Lund University\
+      Lund, Sweden\
+      [https://lu.se](https://lu.se)\
+    titlepage-theme:
+      elements: ["\\titleblock", "\\authorblock", "\\vfill", "\\logoblock", "\\footerblock"]
+      page-align: "center"
+      title-style: "doublelinewide"
+      title-fontsize: 30
+      title-fontstyle: "uppercase"
+      title-space-after: "0.1\\textheight"
+      subtitle-fontstyle: ["Large", "textit"]
+      author-style: "plain"
+      author-sep: "\\hskip1em"
+      author-fontstyle: "Large"
+      author-space-after: "2\\baselineskip"
+      affiliation-style: "numbered-list-with-correspondence"
+      affiliation-fontstyle: "large"
+      affiliation-space-after: "0pt"
+      footer-style: "plain"
+      footer-fontstyle: ["large", "textsc"]
+      footer-space-after: "0pt"
+      logo-size: "0.25\\textheight"
+      logo-space-after: "1cm"
 ---
 
-```{r setup}
+```{r setup, message=FALSE}
 #| message: false
-#| warning: false
+#install.packages("corrgram")
 library(tidyverse)
-library(broom)
+library(corrgram) # visualisation of correlations
+library(lmtest)  # more linear regression tools
+library(hrbrthemes) #ggplot styling
+library(GGally) # Pair plot
+library(ggplot2) # ggplot 2
+library(hrbrthemes) # theme for ggplot
+library(kableExtra)
+ggplot2::theme_set(hrbrthemes::theme_ipsum_rc())
+
+extrafont::loadfonts(device = "all", quiet = TRUE)
+
+knitr::opts_chunk$set(dev = 'png')
+options(device = function(file, width, height) {
+  png(tempfile(), width = width, height = height)
+})
 ```
 
 # Introduction
 
-## Data overview
+## Data description
 
 The dataset is from `gamlss.data` package [@harrell2002PlasmaRetinolBetaCarotene]. It is a cross-sectional study to investigate the relationship between personal characteristics and dietary factors, and plasma concentrations.
 
