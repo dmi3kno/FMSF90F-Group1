@@ -12,7 +12,7 @@ author:
      - name: Lund University
        department: Centre for Environmental and Climate Science
        address: Sölvegatan 37, S-223 62 Lund, Sweden
-bibliography: Project1_plasma.bib
+#bibliography: Project1_plasma.bib
 format: 
   titlepage-pdf:
     documentclass: scrbook
@@ -51,6 +51,7 @@ format:
 #| message: false
 #install.packages("corrgram")
 library(tidyverse)
+library(broom)
 library(corrgram) # visualisation of correlations
 library(lmtest)  # more linear regression tools
 library(hrbrthemes) #ggplot styling
