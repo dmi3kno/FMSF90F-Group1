@@ -2,10 +2,10 @@
 title: "Predicting beta-carotene content in plasma"
 subtitle: "Project 2"
 author: 
- - name: Hoang Long Nguyen
+ - name: Zaide Montes
    affiliations:
      - name: Lund University
-       department: Department of Geology
+       department: Department of Biology
        address: Sölvegatan 12, S-223 62 Lund, Sweden
  - name: Dmytro Perepolkin
    affiliations:
@@ -61,6 +61,8 @@ library(hrbrthemes) # theme for ggplot
 library(kableExtra)
 library(leaps)
 library(glmnet)
+library(patchwork)
+library(plotmo)
 ggplot2::theme_set(hrbrthemes::theme_ipsum_rc())
 
 extrafont::loadfonts(device = "all", quiet = TRUE)
@@ -124,7 +126,7 @@ y <- log(plasma_df$betaplasma)
 
 ```{r}
 # Grid of lambdas
-grid <- 10^seq(10, -2, length = 100) #grid 
+grid <- 10^seq(5, -2, length = 100) #grid 
 
 # Run ridge regression (alpha =0) for each lambda in grid
 ridge.mod <- glmnet(x, y, alpha = 0, lambda = grid)
@@ -149,37 +151,124 @@ ridge.mod <- glmnet(x[train, ], y[train], alpha = 0,
 ridge.pred <- predict(ridge.mod, s = 4, newx = x[test, ])
 
 ```
- The MSE for the $\lambda = 4$ is `r mean((ridge.pred - y.test)^2)`. @fig-ridge-plot1 shows the ridge model ceofficients that ,mksjdhfgkdfgjh
+
+The MSE for the $\lambda = 4$ is `r mean((ridge.pred - y.test)^2)`. @fig-ridge-plot1 shows the ridge model coefficients are approaching to zero. 
  
 ```{r}
 #| label: fig-ridge-plot1
 #| fig-width: 10
 #| fig-height: 5
 #| out-width: 80%
-#| fig-cap: A graph of the ridge model coefficients for different lambdas
-plot(ridge.mod,xvar="lambda",lwd=1.5)
+#| fig-cap: The ridge regression coefficients are displayed for the Plasma data set, as a function of λ. 
+#plot(ridge.mod,xvar="lambda",lwd=1.5)
+plot_glmnet(ridge.mod,xvar="lambda",lwd=1.5)
 ```
 ```{r}
-## 10-fold CV to evaluate test error for different lamdas 
+#| label: fig-ridge-plot2
+#| fig-width: 10
+#| fig-height: 5
+#| out-width: 80%
+#| fig-cap: A graph of the ridge model coefficients for different lambdas. The dashed lines are the log𝜆values corresponding to the 𝜆min (left dashed line) and 𝜆1𝑠𝑒(right dashed line).
+
 set.seed(1)
 cv.out <- cv.glmnet(x[train, ], y[train], alpha = 0)
 plot(cv.out)
+```
+
+```{r}
 # Choose the best:
 bestlam <- cv.out$lambda.min
 ```
 
-The best $\lambda=`r bestlam`$
+The best lambda is $\lambda=`r bestlam`$.
 
 ```{r}
 # MSE associated with this lambda
 ridge.pred <- predict(ridge.mod, s = bestlam,
     newx = x[test, ])
 mean((ridge.pred - y.test)^2)
+```
+The R-squared turns out to be 0.4319724. That is, the best model which explains 34.19% of the variation in the response values of the training data.
+
+
+```{r}
+# Fit lasso model: alpha=1
+# Use only the training data
+lasso.mod <- glmnet(x[train, ], y[train], alpha = 1,
+    lambda = grid)
+```
+
+```{r}
+#| label: fig-Lasso-plot1
+#| fig-width: 10
+#| fig-height: 5
+#| out-width: 80%
+#| fig-cap: The Lasso regression coefficients are displayed for the Plasma data set, as a function of λ.
+plot_glmnet(lasso.mod,label=TRUE,xvar="lambda",lwd=1.5)
+```
+
+```{r}
+#| label: fig-Lasso-plot2
+#| fig-width: 10
+#| fig-height: 5
+#| out-width: 80%
+#| fig-cap: The Lasso regression coefficients are displayed for the Plasma data set, as a function of ∥βˆλL∥1/∥βˆ∥1.
+plot_glmnet(lasso.mod,label=TRUE,lwd=1.5)
+```
+
+```{r}
+#| label: fig-Lasso-plot3
+#| fig-width: 10
+#| fig-height: 5
+#| out-width: 80%
+#| fig-cap:  The figure illustrates the cross validation process for picking the best lambda in lasso regression. The dashed lines are the log𝜆values corresponding to the 𝜆min (left dashed line) and 𝜆1𝑠𝑒(right dashed line).
+set.seed(1)
+cv.out <- cv.glmnet(x[train, ], y[train], alpha = 1)
+plot(cv.out)
+```
+```{r}
+bestlam2 <- cv.out$lambda.min
+```
+
+The best lambda value that minimizes the test MSE turns out to be  $\lambda=`r bestlam2`$.
+
+```{r}
+# compute the test error for this choice of lambda or MSE associated with this lambda
+lasso.pred <- predict(lasso.mod, s = bestlam2,
+    newx = x[test, ])
+mean((lasso.pred - y.test)^2)
+```
+
+The R-squared turns out to be 0.4319724. That is, the best model which explains 34.19% of the variation in the response values of the training data.
+
+```{r}
+# Now fit on full data using the lambda selected by cross-validation
+out <- glmnet(x, y, alpha = 1, lambda = grid)
+
+lasso.coef <- predict(out, type = "coefficients",
+    s = bestlam2)[1:13, ]
+lasso.coef
+lasso.coef[lasso.coef != 0]
+```
+
+
+The variance of ridge regression is slightly lower than the variance of the lasso. Consequently, the minimum MSE of ridge regression is slightly smaller than that of the lasso. In addition, the  models generated from the lasso were  much easier to interpret than those produced by ridge regression. The lasso yields sparse models that involve only a subset of the variables. Hence, depending on the value of λ, the lasso can produce a model involving any number of variables. In contrast, ridge regression will always include all of the variables in the model, although the magnitude of the coefficient estimates will depend on λ. In the lasso regression we observed that the variables that influenced more in the model are the alcohol, fiber and fat (Figurex). To sum up, the lasso should perform better in a setting where a relatively small number of predictors have significant coefficients, and the remaining predictors have very small coefficients or that equal zero.  In contrast, the ridge regression will perform better when the response is a function of many predictors, all with roughly equal-sized coefficients.
+
+
+
+
+
+
+
+
+
+```{r}
+#Principal components regression
 
 ```
 
 
-Lasso
+
 
 
 # References
