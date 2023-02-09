@@ -12,7 +12,7 @@ author:
      - name: Lund University
        department: Centre for Environmental and Climate Science
        address: Sölvegatan 37, S-223 62 Lund, Sweden
-#bibliography: Project1_plasma.bib
+bibliography: Project2_plasma.bib
 format: 
   titlepage-pdf:
     documentclass: scrbook
@@ -45,6 +45,9 @@ format:
       footer-space-after: "0pt"
       logo-size: "0.25\\textheight"
       logo-space-after: "1cm"
+fig-height: 5
+fig-width: 7
+fig-align: "center"
 ---
 
 ```{r setup, message=FALSE}
@@ -61,8 +64,15 @@ library(hrbrthemes) # theme for ggplot
 library(kableExtra)
 library(leaps)
 library(glmnet)
+<<<<<<< HEAD
 library(patchwork)
 library(plotmo)
+=======
+library(randomForest) # for random forest chapter
+library(pls) # for principal component regression
+library(rsample) # for cross-validation
+library(modelr) # evaluation of models
+>>>>>>> 34801284346ffe48f73cb759ff24bf18807a9e9d
 ggplot2::theme_set(hrbrthemes::theme_ipsum_rc())
 
 extrafont::loadfonts(device = "all", quiet = TRUE)
@@ -152,12 +162,14 @@ ridge.pred <- predict(ridge.mod, s = 4, newx = x[test, ])
 
 ```
 
+<<<<<<< HEAD
 The MSE for the $\lambda = 4$ is `r mean((ridge.pred - y.test)^2)`. @fig-ridge-plot1 shows the ridge model coefficients are approaching to zero. 
+=======
+The MSE for the $\lambda = 4$ is `r mean((ridge.pred - y.test)^2)`. @fig-ridge-plot1 shows the ridge model ceofficients that ,mksjdhfgkdfgjh
+>>>>>>> 34801284346ffe48f73cb759ff24bf18807a9e9d
  
 ```{r}
 #| label: fig-ridge-plot1
-#| fig-width: 10
-#| fig-height: 5
 #| out-width: 80%
 #| fig-cap: The ridge regression coefficients are displayed for the Plasma data set, as a function of λ. 
 #plot(ridge.mod,xvar="lambda",lwd=1.5)
@@ -268,6 +280,65 @@ The variance of ridge regression is slightly lower than the variance of the lass
 ```
 
 
+
+
+# Random Forest
+
+We will now use the random forest algorithm implemented in `randomForest` package in R.
+
+```{r}
+rf_fit <- randomForest(log(betaplasma)~., data=plasma_df,
+                       subset = train, mtry=12, importance=TRUE)
+```
+
+The parameter `mtry` determines how many columns are consered for each split. We will have to cross-validate this parameter to make sure we are not overfitting to our dataset. For now, we try to split at each one of the variables. The @fig-rf-predicted-true1 shows the predicted values against the true values for the test portion of our dataset.
+
+```{r}
+#| label: fig-rf-predicted-true1
+#| out-width: 80%
+#| fig-cap: "Predicted vs true values for random forest algorithm"
+rf_pred <- predict(rf_fit, newdata = plasma_df[test,])
+plot(rf_pred, log(plasma_df$betaplasma)[test],
+     ylab="log(betaplasma)", xlab="predicted")
+abline(0,1)
+```
+
+The test MSE for random forest is `r mean((rf_pred-log(plasma_df$betaplasma[test]))^2)`, which is pretty impressive. As for any tree-based algorithm, interpretability is usually an issue. We can use the special function in the `randomForest` package to see which variables were most frequently used in the tree splits (@fig-rf-varimp1).
+
+
+```{r}
+#| label: fig-rf-varimp1
+#| out-width: 80%
+#| fig-cap: "Variable importance plot for random forest with mtry 12"
+varimp_m <- importance(rf_fit) #matrix form
+varImpPlot(rf_fit, main="")
+```
+
+It seems like `r glue::glue_collapse(names(sort(varimp_m[,1], decreasing = TRUE)[1:5]), sep=", ", last=", and ")` are the most important variables for predicting the level of beta-carotene in plasma.
+
+We will now determine the best value of `mtry` parameter to use in our random forest model. @fig-rfcv shows the out-of-fold MSE for the models with different `mtry`.  
+
+```{r}
+#| label: fig-rfcv
+#| fig-cap: "Cross-validated performance of random forest"
+#| out-width: "80%"
+set.seed(42)
+cvrf_obj <- randomForest::rfcv(x, y)
+with(cvrf_obj, plot(n.var, error.cv, log="x", type="o", lwd=2))
+bestvars <- which.min(cvrf_obj$error.cv)
+```
+
+It seems like the model with `r paste("mtry=", cvrf_obj$n.var[bestvars])` had the best out-of-fold performance. The @fig-rfcv-bst-predactual shows the predicted vs the actual values from the best model.
+
+```{r}
+#| label: fig-rfcv-bst-predactual
+#| fig-cap: "Predicted vs actual values for the best model"
+#| out-width: "80%"
+plot(cvrf_obj$predicted[[bestvars]], y, xlab="predicted", ylab="actual")
+abline(0,1)
+```
+
+This means that our original model was right and we can report that the best out-of-fold estimate of MSE for the random forest model is `r cvrf_obj$error.cv[bestvars]`.
 
 
 
