@@ -64,15 +64,12 @@ library(hrbrthemes) # theme for ggplot
 library(kableExtra)
 library(leaps)
 library(glmnet)
-<<<<<<< HEAD
 library(patchwork)
 library(plotmo)
-=======
 library(randomForest) # for random forest chapter
 library(pls) # for principal component regression
 library(rsample) # for cross-validation
 library(modelr) # evaluation of models
->>>>>>> 34801284346ffe48f73cb759ff24bf18807a9e9d
 ggplot2::theme_set(hrbrthemes::theme_ipsum_rc())
 
 extrafont::loadfonts(device = "all", quiet = TRUE)
