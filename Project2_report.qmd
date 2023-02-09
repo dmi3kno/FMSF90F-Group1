@@ -70,7 +70,7 @@ library(randomForest) # for random forest chapter
 library(pls) # for principal component regression
 library(rsample) # for cross-validation
 library(modelr) # evaluation of models
-ggplot2::theme_set(hrbrthemes::theme_ipsum_rc())
+ggplot2::theme_set(theme_classic())
 
 extrafont::loadfonts(device = "all", quiet = TRUE)
 
@@ -119,9 +119,9 @@ plasma_df <- read_csv("data/plasma.txt", show_col_types = FALSE)
 
 # Multivariate regression
 
- glmnet requires a model-matrix as the model specification.
- A model matrix is a matrix with a column for each predictor (=x-variable) in the model (including the extra columns for polynomials, dummy variables etc), and each row is for a unique observation.
- Sometimes the model-matrix includes a column for the intercept, in glmnet it should (typically) not.
+`glmnet` requires a model-matrix as the model specification.
+ A model matrix is a matrix with a column for each predictor (i.e. $x$-variable) in the model (including the extra columns for polynomials, dummy variables etc), and each row is for a unique observation.
+ Sometimes the model-matrix includes a column for the intercept, in `glmnet` it should (typically) not.
 
 ```{r}
 #head(plasma_df)
@@ -159,12 +159,8 @@ ridge.pred <- predict(ridge.mod, s = 4, newx = x[test, ])
 
 ```
 
-<<<<<<< HEAD
 The MSE for the $\lambda = 4$ is `r mean((ridge.pred - y.test)^2)`. @fig-ridge-plot1 shows the ridge model coefficients are approaching to zero. 
-=======
-The MSE for the $\lambda = 4$ is `r mean((ridge.pred - y.test)^2)`. @fig-ridge-plot1 shows the ridge model ceofficients that ,mksjdhfgkdfgjh
->>>>>>> 34801284346ffe48f73cb759ff24bf18807a9e9d
- 
+
 ```{r}
 #| label: fig-ridge-plot1
 #| out-width: 80%
@@ -172,6 +168,7 @@ The MSE for the $\lambda = 4$ is `r mean((ridge.pred - y.test)^2)`. @fig-ridge-p
 #plot(ridge.mod,xvar="lambda",lwd=1.5)
 plot_glmnet(ridge.mod,xvar="lambda",lwd=1.5)
 ```
+
 ```{r}
 #| label: fig-ridge-plot2
 #| fig-width: 10
@@ -192,13 +189,35 @@ bestlam <- cv.out$lambda.min
 The best lambda is $\lambda=`r bestlam`$.
 
 ```{r}
+#| label: fig-vaimp-ridge
+#| fig-width: 10
+#| fig-height: 5
+#| out-width: 80%
+#| fig-cap: Coefficients for the ridge model under best lambda
+
+out <- glmnet(x, y, alpha = 0, lambda = grid)
+ridge.coef <- predict(out, type = "coefficients",
+    s = bestlam)
+
+ridge.coef %>% as.matrix() %>% as.data.frame() %>%
+  rownames_to_column()%>%
+  arrange(-abs(s1)) %>% 
+    filter(!str_detect(rowname, "Intercept")) %>% 
+  ggplot()+geom_col(aes(x=s1,y=fct_reorder(rowname, abs(s1))))+
+  labs(y="Coefficient", x="value")
+```
+
+
+
+
+```{r}
 # MSE associated with this lambda
 ridge.pred <- predict(ridge.mod, s = bestlam,
     newx = x[test, ])
-mean((ridge.pred - y.test)^2)
+ridge.test.mse <- mean((ridge.pred - y.test)^2)
 ```
-The R-squared turns out to be 0.4319724. That is, the best model which explains 34.19% of the variation in the response values of the training data.
 
+The MSE turns out to be `r ridge.test.mse`. 
 
 ```{r}
 # Fit lasso model: alpha=1
@@ -207,21 +226,19 @@ lasso.mod <- glmnet(x[train, ], y[train], alpha = 1,
     lambda = grid)
 ```
 
-```{r}
-#| label: fig-Lasso-plot1
-#| fig-width: 10
-#| fig-height: 5
-#| out-width: 80%
-#| fig-cap: The Lasso regression coefficients are displayed for the Plasma data set, as a function of λ.
-plot_glmnet(lasso.mod,label=TRUE,xvar="lambda",lwd=1.5)
-```
+@fig-Lasso-plot shows the coefficients against the penalty $\lambda$.
 
 ```{r}
-#| label: fig-Lasso-plot2
+#| label: fig-Lasso-plot
+#| layout-ncol: 2
 #| fig-width: 10
 #| fig-height: 5
 #| out-width: 80%
-#| fig-cap: The Lasso regression coefficients are displayed for the Plasma data set, as a function of ∥βˆλL∥1/∥βˆ∥1.
+#| fig-cap: The Lasso regression coefficients 
+#| fig-subcap: 
+#|  - against df.
+#|  - against lambda.
+plot_glmnet(lasso.mod,label=TRUE,xvar="lambda",lwd=1.5)
 plot_glmnet(lasso.mod,label=TRUE,lwd=1.5)
 ```
 
@@ -230,11 +247,14 @@ plot_glmnet(lasso.mod,label=TRUE,lwd=1.5)
 #| fig-width: 10
 #| fig-height: 5
 #| out-width: 80%
-#| fig-cap:  The figure illustrates the cross validation process for picking the best lambda in lasso regression. The dashed lines are the log𝜆values corresponding to the 𝜆min (left dashed line) and 𝜆1𝑠𝑒(right dashed line).
+#| fig-cap:  Cross-validated penalty for lasso model.
 set.seed(1)
 cv.out <- cv.glmnet(x[train, ], y[train], alpha = 1)
 plot(cv.out)
 ```
+
+The @fig-Lasso-plot3 illustrates the cross validation process for picking the best lambda in lasso regression. The dashed lines are the log $\lambda$ values corresponding to the $\lambda_{min}$ (left dashed line) and $\lambda_{1se}$ (right dashed line)
+
 ```{r}
 bestlam2 <- cv.out$lambda.min
 ```
@@ -245,30 +265,33 @@ The best lambda value that minimizes the test MSE turns out to be  $\lambda=`r b
 # compute the test error for this choice of lambda or MSE associated with this lambda
 lasso.pred <- predict(lasso.mod, s = bestlam2,
     newx = x[test, ])
-mean((lasso.pred - y.test)^2)
+lasso.test.mse <- mean((lasso.pred - y.test)^2)
 ```
 
-The R-squared turns out to be 0.4319724. That is, the best model which explains 34.19% of the variation in the response values of the training data.
+The test MSE turns out to be `r lasso.test.mse`.
 
 ```{r}
-# Now fit on full data using the lambda selected by cross-validation
+#| label: fig-vaimp-lasso
+#| fig-width: 10
+#| fig-height: 5
+#| out-width: 80%
+#| fig-cap: Coefficients for the lasso model under best lambda
+
 out <- glmnet(x, y, alpha = 1, lambda = grid)
 
 lasso.coef <- predict(out, type = "coefficients",
-    s = bestlam2)[1:13, ]
-lasso.coef
-lasso.coef[lasso.coef != 0]
+    s = bestlam2)
+
+lasso.coef %>% as.matrix() %>% as.data.frame() %>%
+  rownames_to_column()%>%
+  arrange(-abs(s1)) %>% 
+  filter(!str_detect(rowname, "Intercept")) %>% 
+  ggplot()+geom_col(aes(x=s1,y=fct_reorder(rowname, abs(s1))))+  labs(y="Coefficient", x="value")
+
 ```
 
 
-The variance of ridge regression is slightly lower than the variance of the lasso. Consequently, the minimum MSE of ridge regression is slightly smaller than that of the lasso. In addition, the  models generated from the lasso were  much easier to interpret than those produced by ridge regression. The lasso yields sparse models that involve only a subset of the variables. Hence, depending on the value of λ, the lasso can produce a model involving any number of variables. In contrast, ridge regression will always include all of the variables in the model, although the magnitude of the coefficient estimates will depend on λ. In the lasso regression we observed that the variables that influenced more in the model are the alcohol, fiber and fat (Figurex). To sum up, the lasso should perform better in a setting where a relatively small number of predictors have significant coefficients, and the remaining predictors have very small coefficients or that equal zero.  In contrast, the ridge regression will perform better when the response is a function of many predictors, all with roughly equal-sized coefficients.
-
-
-
-
-
-
-
+The variance of ridge regression is slightly lower than the variance of the lasso. Consequently, the minimum MSE of ridge regression is slightly smaller than that of the lasso. In addition, the  models generated from the lasso were  much easier to interpret than those produced by ridge regression. The lasso yields sparse models that involve only a subset of the variables. Hence, depending on the value of $\lambda$, the lasso can produce a model involving reduced variables. In contrast, ridge regression will always include all of the variables in the model, although the magnitude of the coefficient estimates will depend on $\lambda$. In the lasso regression we observed that the variables that influenced more in the model are the `sex`, `vituse`, `smokestat`, `bmicat` (@fig-vaimp-lasso). To sum up, the lasso should perform better in a setting where a relatively small number of predictors have significant coefficients, and the remaining predictors have very small coefficients or that equal zero.  In contrast, the ridge regression will perform better when the response is a function of many predictors, all with roughly equal-sized coefficients.
 
 
 ```{r}
@@ -285,10 +308,10 @@ We will now use the random forest algorithm implemented in `randomForest` packag
 
 ```{r}
 rf_fit <- randomForest(log(betaplasma)~., data=plasma_df,
-                       subset = train, mtry=12, importance=TRUE)
+                       subset = train, importance=TRUE)
 ```
 
-The parameter `mtry` determines how many columns are consered for each split. We will have to cross-validate this parameter to make sure we are not overfitting to our dataset. For now, we try to split at each one of the variables. The @fig-rf-predicted-true1 shows the predicted values against the true values for the test portion of our dataset.
+The parameter `mtry` in random forest algorithm determines how many columns are consered for each split. We will have to cross-validate this parameter to make sure we are not overfitting to our dataset. For now, we try to split at each one of the variables. The @fig-rf-predicted-true1 shows the predicted values against the true values for the test portion of our dataset.
 
 ```{r}
 #| label: fig-rf-predicted-true1
@@ -331,7 +354,8 @@ It seems like the model with `r paste("mtry=", cvrf_obj$n.var[bestvars])` had th
 #| label: fig-rfcv-bst-predactual
 #| fig-cap: "Predicted vs actual values for the best model"
 #| out-width: "80%"
-plot(cvrf_obj$predicted[[bestvars]], y, xlab="predicted", ylab="actual")
+plot(cvrf_obj$predicted[[bestvars]], y, 
+     xlab="predicted", ylab="actual")
 abline(0,1)
 ```
 
