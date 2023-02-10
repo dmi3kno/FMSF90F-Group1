@@ -70,6 +70,7 @@ library(randomForest) # for random forest chapter
 library(pls) # for principal component regression
 library(rsample) # for cross-validation
 library(modelr) # evaluation of models
+library(splines)
 ggplot2::theme_set(theme_classic())
 
 extrafont::loadfonts(device = "all", quiet = TRUE)
@@ -378,6 +379,163 @@ varImpPlot(rf_fit, main="")
 ```
 
 It seems like `r glue::glue_collapse(names(sort(varimp_m[,1], decreasing = TRUE)[1:5]), sep=", ", last=", and ")` are the most important variables for predicting the level of beta-carotene in plasma.
+
+
+# Non-linear effects
+
+Now we are proceeding to developing a model for predicting the Greenhouse gas emissions using the non-linear effects, namely *splines*.
+
+The Berkeley Earth data (Temp_BE.csv) provides the annual anomalies from the global mean temperature, calculated from the period Jan 1951-Dec 1980, which amounted to 14.105°C with 95% CI (14.080°C, 14.130°C).
+
+```{r}
+TEMPBE_df <- read_csv("data/Temp_BE.csv", show_col_types = FALSE) %>% 
+  mutate(abs_temp=14.105+anomaly_1y) %>% 
+  select(year, abs_temp)
+
+GHG_df <- read_csv("data/GHG_1880_2014.csv", show_col_types = FALSE) %>% 
+  rename(GHG=KYOTOGHG) %>% 
+  mutate(GHG_cum=cumsum(replace_na(GHG, 0)))
+
+GHG_TEMP_df <- left_join(GHG_df, TEMPBE_df, by="year")
+```
+
+```{r}
+ns_mod <- lm(GHG_cum~ns(abs_temp, df=4), data=GHG_TEMP_df)
+```
+
+```{r}
+lm_mod <- lm(GHG_cum~abs_temp, data=GHG_TEMP_df)
+```
+
+Compare spline to linear model in @fig-ghg-ns-lm
+
+```{r}
+#| label: fig-ghg-ns-lm
+#| layout-ncol: 2
+#| fig-width: 5
+#| fig-height: 4
+#| fig-cap: "Original data with the fitted values (including standard error)"
+#| fig-subcap: 
+#|   - "natural spline model"
+#|   - "linear model"
+predns_df <- predict(ns_mod, se = TRUE) %>% 
+  as_tibble() %>% 
+  bind_cols(GHG_TEMP_df)
+predlm_df <- predict(lm_mod, se=TRUE) %>% 
+  as_tibble() %>% 
+  bind_cols(GHG_TEMP_df)
+
+GHG_TEMP_df %>% ggplot(aes(x=abs_temp,y=GHG_cum))+ 
+  geom_point(shape=21,alpha=0.5) +
+  geom_line(data=predns_df,aes(y=fit),
+            color="mediumpurple4",linewidth=1.5) + 
+  geom_line(data=predns_df,aes(y=fit + 2*se.fit) , 
+            color="mediumpurple4",linewidth=0.5,
+            lty="dashed",alpha=0.8) + 
+  geom_line(data=predns_df,aes(y=fit - 2*se.fit) , 
+            color="mediumpurple4",linewidth=0.5,
+            lty="dashed",alpha=0.8)+
+  labs(x="Absolute temperature,°C", y="GHG emission, Gg CO2/yr")
+
+GHG_TEMP_df %>% ggplot(aes(x=abs_temp,y=GHG_cum))+ 
+  geom_point(shape=21,alpha=0.5) +
+  geom_line(data=predlm_df,aes(y=fit),
+            color="mediumpurple4",linewidth=1.5) + 
+  geom_line(data=predlm_df,aes(y=fit + 2*se.fit) , 
+            color="mediumpurple4",linewidth=0.5,
+            lty="dashed",alpha=0.8) + 
+  geom_line(data=predlm_df,aes(y=fit - 2*se.fit) , 
+            color="mediumpurple4",linewidth=0.5,
+            lty="dashed",alpha=0.8)+
+  labs(x="Absolute temperature,°C", y="GHG emission, Gg CO2/yr")
+```
+
+We compare the fitted vs the actual values in @fig-fitactual-ns-lm.
+
+```{r}
+#| label: fig-fitactual-ns-lm
+#| layout-ncol: 2
+#| fig-width: 5
+#| fig-height: 5
+#| fig-cap: "Fitted vs actual values"
+#| fig-subcap: 
+#|   - "natural spline model"
+#|   - "linear model"
+predns_df %>% ggplot(aes(x=fit,y=GHG_cum))+ 
+  geom_point(shape=21,alpha=0.5) +
+  geom_abline(slope=1, intercept = 0)+
+  labs(x="Fitted", y="Actual")
+
+predlm_df %>% ggplot(aes(x=fit,y=GHG_cum))+ 
+  geom_point(shape=21,alpha=0.5) +
+  geom_abline(slope=1, intercept = 0)+
+  labs(x="Fitted", y="Actual")
+```
+
+Now we tune the spline model changing the degrees of freedom and measuring the out-of-fold error. @fig-ns-cv-error shows MSE for ....
+
+```{r}
+#| label: fig-ns-cv-error
+#| fig-width: 10
+#| fig-height: 5
+#| fig-cap: "Out-of-fold MSE for different values of df"
+set.seed(42)
+cv_error <- vector("numeric", length=10)
+for(i in 1:10){
+  ghg_glm_fit <- glm(GHG_cum~ns(abs_temp, df=i),
+                     data=GHG_TEMP_df)
+  cv_error[i] <- boot::cv.glm(GHG_TEMP_df, ghg_glm_fit, K=10)$delta[2]
+}
+#cv_error
+plot(cv_error, type="l", xlab="df", ylab="MSE")
+```
+
+The first component is the raw cross-validation estimate of prediction error. The second component is the adjusted cross-validation estimate. The adjustment is designed to compensate for the bias introduced by not using leave-one-out cross-validation.
+
+
+```{r}
+ns_mod3 <- lm(GHG_cum~ns(abs_temp, df=3), data=GHG_TEMP_df)
+ns_mod8 <- lm(GHG_cum~ns(abs_temp, df=8), data=GHG_TEMP_df)
+```
+
+Compare splines of different complexity @fig-ghg-ns38
+
+```{r}
+#| label: fig-ghg-ns38
+#| layout-ncol: 2
+#| fig-width: 10
+#| fig-height: 5
+#| fig-cap: "Original data with the fitted values (natural splines with df 3 and 8)"
+
+predns3_df <- predict(ns_mod3, se = TRUE) %>% 
+  as_tibble() %>% 
+  bind_cols(GHG_TEMP_df)
+predns8_df <- predict(ns_mod8, se = TRUE) %>% 
+  as_tibble() %>% 
+  bind_cols(GHG_TEMP_df)
+
+
+GHG_TEMP_df %>% ggplot(aes(x=abs_temp,y=GHG_cum))+ 
+  geom_point(shape=21,alpha=0.5) +
+  geom_line(data=predns3_df,aes(y=fit),
+            color="mediumpurple4",linewidth=1.5, alpha=0.5) + 
+  geom_line(data=predns3_df,aes(y=fit + 2*se.fit) , 
+            color="mediumpurple4",linewidth=0.5,
+            lty="dashed",alpha=0.8) + 
+  geom_line(data=predns3_df,aes(y=fit - 2*se.fit) , 
+            color="mediumpurple4",linewidth=0.5,
+            lty="dashed",alpha=0.8)+
+    geom_line(data=predns8_df,aes(y=fit),
+            color="firebrick",linewidth=1.5, alpha=0.5) + 
+  geom_line(data=predns8_df,aes(y=fit + 2*se.fit) , 
+            color="firebrick",linewidth=0.5,
+            lty="dashed",alpha=0.8) + 
+  geom_line(data=predns8_df,aes(y=fit - 2*se.fit) , 
+            color="firebrick",linewidth=0.5,
+            lty="dashed",alpha=0.8)+
+  labs(x="Absolute temperature,°C", y="GHG emission, Gg CO2/yr")
+
+```
 
 
 # References
