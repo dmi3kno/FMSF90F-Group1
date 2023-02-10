@@ -129,6 +129,8 @@ y <- log(plasma_df$betaplasma)
 #head(y)
 ```
 
+## Ridge regression
+
 ```{r}
 # Grid of lambdas
 grid <- 10^seq(5, -2, length = 100) #grid 
@@ -214,6 +216,8 @@ ridge.test.mse <- mean((ridge.pred - y.test)^2)
 
 The MSE turns out to be `r ridge.test.mse`.
 
+## Lasso regression
+
 ```{r}
 # Fit lasso model: alpha=1
 # Use only the training data
@@ -287,38 +291,70 @@ lasso.coef %>% as.matrix() %>% as.data.frame() %>%
 
 The variance of ridge regression is slightly lower than the variance of the lasso. Consequently, the minimum MSE of ridge regression is slightly smaller than that of the lasso. In addition, the models generated from the lasso were much easier to interpret than those produced by ridge regression. The lasso yields sparse models that involve only a subset of the variables. Hence, depending on the value of $\lambda$, the lasso can produce a model involving reduced variables. In contrast, ridge regression will always include all of the variables in the model, although the magnitude of the coefficient estimates will depend on $\lambda$. In the lasso regression we observed that the variables that influenced more in the model are the `sex`, `vituse`, `smokestat`, `bmicat` (@fig-vaimp-lasso). To sum up, the lasso should perform better in a setting where a relatively small number of predictors have significant coefficients, and the remaining predictors have very small coefficients or that equal zero. In contrast, the ridge regression will perform better when the response is a function of many predictors, all with roughly equal-sized coefficients.
 
+## Principle component regression
+
 ```{r}
-#Principal components regression
-pr.out <- prcomp(plasma_df, scale = FALSE)
-pr.out$rotation
-
-pr.var <- pr.out$sdev^2
-pve <- pr.var / sum(pr.var)
-
-plasma_pca_df <- data.frame(pve=pve,PC=1:13)
-
-plasma_pca_df %>% ggplot(aes(x=PC,y=pve))+
-  geom_point(size=3)+
-  geom_line() + 
-  labs(y="Proportion of variance explained") 
-
-plasma_df_with_pca <- bind_cols(plasma_df, pr.out$x[,1:3])
-
-pca_lm <- lm(log(betaplasma) ~ PC1 + PC2 + PC3, data=plasma_df_with_pca)
-summary(pca_lm)
-
+pcr_mod <- pls::pcr(log(betaplasma)~., data=plasma_df, scale=TRUE, validation="CV")
+#summary(pcr_mod)
 ```
+
+@fig-pcr-validplot1 shows the out-of-fold (cross-validated) MSE for each number of components in the PCR.
+
+```{r}
+#| label: fig-pcr-validplot1
+#| fig-width: 10
+#| fig-height: 5
+#| out-width: 80%
+#| fig-cap:  Cross-validated MSE for PCR model.
+validationplot(pcr_mod, val.type = "MSEP", main="")
+```
+
+We definitely dont need more then 8 components. Let's perform CV on the training dataset and see if we can reduce the model even further.
+
+```{r}
+#| label: fig-pcr-validplot2
+#| fig-width: 10
+#| fig-height: 5
+#| out-width: 80%
+#| fig-cap:  MSE for PCR model cross-validated on the training dataset.
+set.seed(1)
+pcr.fit <- pcr(log(betaplasma)~., data=plasma_df, ncomp=8, 
+               subset = train, scale = TRUE, validation = "CV")
+validationplot(pcr.fit, val.type = "MSEP",lwd=2,legendpos = "topright")
+```
+
+We select the lowest number of components which minimizes MSE
+
+```{r}
+pcr.pred <- predict(pcr.fit, x[test, ], ncomp = 3)
+pcr.test.mse <- mean((pcr.pred - y.test)^2)
+```
+
+The test MSE for the PCR is `r pcr.test.mse`. 
 
 # Random Forest
 
 We will now use the random forest algorithm implemented in `randomForest` package in R.
 
+The parameter `mtry` in random forest algorithm determines how many columns are consered for each split. We will have to cross-validate this parameter to make sure we are not overfitting to our dataset. We will now determine the best value of `mtry` parameter to use in our random forest model. @fig-rfcv shows the out-of-fold MSE for the models with different `mtry`.
+
 ```{r}
-rf_fit <- randomForest(log(betaplasma)~., data=plasma_df,
-                       subset = train, importance=TRUE)
+#| label: fig-rfcv
+#| out-width: 80%
+#| fig-cap: "Cross-validated tuning of parameter mtry"
+set.seed(42)
+tuneRF(x[train,], y[train], mtryStart = 3, 
+       stepFactor=1.5, ntreeTry = 1000)
 ```
 
-The parameter `mtry` in random forest algorithm determines how many columns are consered for each split. We will have to cross-validate this parameter to make sure we are not overfitting to our dataset. For now, we try to split at each one of the variables. The @fig-rf-predicted-true1 shows the predicted values against the true values for the test portion of our dataset.
+The @fig-rf-predicted-true1 shows the predicted values against the true values for the test portion of our dataset.
+
+```{r}
+rf_fit <- randomForest(log(betaplasma)~., data=plasma_df, mtry=3,
+                       subset = train, importance=TRUE)
+
+```
+
 
 ```{r}
 #| label: fig-rf-predicted-true1
@@ -328,9 +364,10 @@ rf_pred <- predict(rf_fit, newdata = plasma_df[test,])
 plot(rf_pred, log(plasma_df$betaplasma)[test],
      ylab="log(betaplasma)", xlab="predicted")
 abline(0,1)
+rf.mse <- mean((rf_pred-y.test)^2)
 ```
 
-The test MSE for random forest is `r mean((rf_pred-log(plasma_df$betaplasma[test]))^2)`, which is pretty impressive. As for any tree-based algorithm, interpretability is usually an issue. We can use the special function in the `randomForest` package to see which variables were most frequently used in the tree splits (@fig-rf-varimp1).
+The test MSE for random forest is `r rf.mse`, which is pretty impressive. As for any tree-based algorithm, interpretability is usually an issue. We can use the special function in the `randomForest` package to see which variables were most frequently used in the tree splits (@fig-rf-varimp1).
 
 ```{r}
 #| label: fig-rf-varimp1
@@ -342,29 +379,5 @@ varImpPlot(rf_fit, main="")
 
 It seems like `r glue::glue_collapse(names(sort(varimp_m[,1], decreasing = TRUE)[1:5]), sep=", ", last=", and ")` are the most important variables for predicting the level of beta-carotene in plasma.
 
-We will now determine the best value of `mtry` parameter to use in our random forest model. @fig-rfcv shows the out-of-fold MSE for the models with different `mtry`.
-
-```{r}
-#| label: fig-rfcv
-#| fig-cap: "Cross-validated performance of random forest"
-#| out-width: "80%"
-set.seed(42)
-cvrf_obj <- randomForest::rfcv(x, y)
-with(cvrf_obj, plot(n.var, error.cv, log="x", type="o", lwd=2))
-bestvars <- which.min(cvrf_obj$error.cv)
-```
-
-It seems like the model with `r paste("mtry=", cvrf_obj$n.var[bestvars])` had the best out-of-fold performance. The @fig-rfcv-bst-predactual shows the predicted vs the actual values from the best model.
-
-```{r}
-#| label: fig-rfcv-bst-predactual
-#| fig-cap: "Predicted vs actual values for the best model"
-#| out-width: "80%"
-plot(cvrf_obj$predicted[[bestvars]], y, 
-     xlab="predicted", ylab="actual")
-abline(0,1)
-```
-
-This means that our original model was right and we can report that the best out-of-fold estimate of MSE for the random forest model is `r cvrf_obj$error.cv[bestvars]`.
 
 # References
