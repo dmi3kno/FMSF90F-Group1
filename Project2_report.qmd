@@ -299,7 +299,7 @@ pcr_mod <- pls::pcr(log(betaplasma)~., data=plasma_df, scale=TRUE, validation="C
 #summary(pcr_mod)
 ```
 
-@fig-pcr-validplot1 shows the out-of-fold (cross-validated) MSE for each number of components in the PCR.
+@fig-pcr-validplot1 shows the out-of-fold (cross-validated) MSEP for each number of components in the PCR.
 
 ```{r}
 #| label: fig-pcr-validplot1
@@ -310,7 +310,7 @@ pcr_mod <- pls::pcr(log(betaplasma)~., data=plasma_df, scale=TRUE, validation="C
 validationplot(pcr_mod, val.type = "MSEP", main="")
 ```
 
-We definitely dont need more then 8 components. Let's perform CV on the training dataset and see if we can reduce the model even further.
+The number of principal components suffice to explain most of the variability in the data, as well as the relationship with the response belong to 8 components. Let's perform CV on the training dataset and see if we can reduce the model even further. 
 
 ```{r}
 #| label: fig-pcr-validplot2
@@ -324,7 +324,7 @@ pcr.fit <- pcr(log(betaplasma)~., data=plasma_df, ncomp=8,
 validationplot(pcr.fit, val.type = "MSEP",lwd=2,legendpos = "topright")
 ```
 
-We select the lowest number of components which minimizes MSE
+The figure @fig-pcr-validplot2 indicates that performing PCR with 3 as number of components can results in substantial improvement over least squares. Thus, we select the lowest number of components which minimizes MSE.
 
 ```{r}
 pcr.pred <- predict(pcr.fit, x[test, ], ncomp = 3)
@@ -332,6 +332,8 @@ pcr.test.mse <- mean((pcr.pred - y.test)^2)
 ```
 
 The test MSE for the PCR is `r pcr.test.mse`. 
+
+In conclusion, All three methods offer some improvement over least squares. However, PCR and ridge regression slightly outperform the lasso regression. Thus, although PCR tends to work exceptionally well in many practical settings, this method only allows models to be developed based on a small set of features. Thus, PCR is more closely related to ridge regression than to lasso.
 
 # Random Forest
 
@@ -472,7 +474,8 @@ predlm_df %>% ggplot(aes(x=fit,y=GHG_cum))+
   labs(x="Fitted", y="Actual")
 ```
 
-Now we tune the spline model changing the degrees of freedom and measuring the out-of-fold error. @fig-ns-cv-error shows MSE for ....
+Now we tune the spline model changing the degrees of freedom and measuring the out-of-fold error. @fig-ns-cv-error shows ten-fold cross-validated mean squares errors for splines with various degrees of freedom fit to the data.
+
 
 ```{r}
 #| label: fig-ns-cv-error
@@ -537,5 +540,7 @@ GHG_TEMP_df %>% ggplot(aes(x=abs_temp,y=GHG_cum))+
 
 ```
 
+
+Figure @fig-ghg-ns38 compares a natural cubic spline with 3 degrees of freedom, purple line, to a degree-8 polynomial, red line, on the data set. The flexibility in the degree-8 polynomial produces ... 
 
 # References
