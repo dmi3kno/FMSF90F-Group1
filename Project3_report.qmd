@@ -12,7 +12,7 @@ author:
      - name: Lund University
        department: Centre for Environmental and Climate Science
        address: Sölvegatan 37, S-223 62 Lund, Sweden
-bibliography: Project2_plasma.bib
+bibliography: Project3_bigfoot.bib
 format: 
   titlepage-pdf:
     documentclass: scrbook
@@ -81,6 +81,32 @@ options(device = function(file, width, height) {
 })
 ```
 
+```{r}
+#| eval: false
+bigfoot_original <- readr::read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-09-13/bigfoot.csv", show_col_types = FALSE)
+
+bigfoot <- bigfoot_original %>%
+# Select the relevant covariates:
+dplyr::select(classification , observed , longitude , latitude , visibility) %>%
+# Remove observations of class C ( second - or third hand accounts ):
+filter(classification != "Class C") %>%
+# Turn into 0/1, 1 = Class A, 0 = Class B:
+mutate(class = ifelse(classification == "Class␣A", 1, 0)) %>%
+# Create new indicator variables for some words from the description:
+mutate(fur = grepl("fur", observed),
+howl = grepl("howl", observed),
+saw = grepl("saw", observed),
+heard = grepl("heard", observed )) %>%
+# Remove unnecessary variables:
+dplyr::select(-c("classification", "observed")) %>%
+# Remove any rows that contain missing values:
+drop_na()
+
+write_csv(bigfoot, "data/bigfoot.csv")
+
+```
+
+
 # Regression and tree-based models
 
 ## Introduction
@@ -88,6 +114,33 @@ options(device = function(file, width, height) {
 ### Data description
 
 The dataset is from `gamlss.data` package [@harrell2002PlasmaRetinolBetaCarotene]. It is a cross-sectional study to investigate the relationship between personal characteristics and dietary factors, and plasma concentrations.
+
+
+```{r}
+#| echo: true
+bigfoot <- read_csv("data/bigfoot.csv", show_col_types = FALSE)
+```
+
+```{r}
+
+set.seed(42)
+train_idx <- sample(1:nrow(bigfoot), nrow(bigfoot)*0.7)
+test_idx <- (-train_idx)
+
+```
+
+
+## Logistic regression
+Zaide 
+
+## Random Forest
+Zaide
+
+## LDA/QDA
+Dmytro
+
+## SVM
+Dmytro
 
 
 # References
