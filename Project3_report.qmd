@@ -71,6 +71,7 @@ library(pls) # for principal component regression
 library(rsample) # for cross-validation
 library(modelr) # evaluation of models
 library(splines)
+library(MASS) # for LDA
 ggplot2::theme_set(theme_classic())
 
 extrafont::loadfonts(device = "all", quiet = TRUE)
@@ -91,7 +92,7 @@ dplyr::select(classification , observed , longitude , latitude , visibility) %>%
 # Remove observations of class C ( second - or third hand accounts ):
 filter(classification != "Class C") %>%
 # Turn into 0/1, 1 = Class A, 0 = Class B:
-mutate(class = ifelse(classification == "Class␣A", 1, 0)) %>%
+mutate(class = ifelse(classification == "Class A", 1, 0)) %>%
 # Create new indicator variables for some words from the description:
 mutate(fur = grepl("fur", observed),
 howl = grepl("howl", observed),
@@ -127,6 +128,8 @@ set.seed(42)
 train_idx <- sample(1:nrow(bigfoot), nrow(bigfoot)*0.7)
 test_idx <- (-train_idx)
 
+bigfoot %>% summary()
+
 ```
 
 
@@ -137,7 +140,7 @@ Zaide
 Zaide
 
 ## LDA/QDA
-Dmytro
+We build a classifier for the 
 
 ## SVM
 Dmytro
