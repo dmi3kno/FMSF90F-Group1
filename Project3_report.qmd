@@ -114,12 +114,19 @@ write_csv(bigfoot, "data/bigfoot.csv")
 
 ### Data description
 
-The dataset is from `gamlss.data` package [@harrell2002PlasmaRetinolBetaCarotene]. It is a cross-sectional study to investigate the relationship between personal characteristics and dietary factors, and plasma concentrations.
+The Bigfoot Field Researchers Organization (BFRO) is an organization dedicated to investigating the bigfoot mystery, and for years they have been collecting reported sightings in a database. They manually classify their reports into
 
+- Class A: Clear sightings in circumstances where misinterpretation or misidentification of other animals can be ruled out with greater confidence
+- Class B: Incidents where a possible bigfoot was observed at a great distance or in poor lighting conditions and incidents in any other circumstance that did not afford a clear view of the subject.
+
+However, they wonder if this can be automated and done by a classification algorithm instead. So in this task, you will set up a few different classification algorithms for this aim, and evaluate their performance.
+
+In this task we are using a slightly simplified version of the data set where we have extracted some variables of interest and deleted observations that are missing any of these variables of interest.
 
 ```{r}
 #| echo: true
-bigfoot <- read_csv("data/bigfoot.csv", show_col_types = FALSE)
+bigfoot <- read_csv("data/bigfoot.csv", show_col_types = FALSE) %>% 
+  mutate(class=factor(class, levels=c(1,0), labels=c("Class A", "Class B")))
 ```
 
 ```{r}
@@ -129,7 +136,6 @@ train_idx <- sample(1:nrow(bigfoot), nrow(bigfoot)*0.7)
 test_idx <- (-train_idx)
 
 bigfoot %>% summary()
-
 ```
 
 
@@ -140,7 +146,7 @@ Zaide
 Zaide
 
 ## LDA/QDA
-We build a classifier for the 
+We build a classifier for the `class` variable of the `bigfoot`
 
 ## SVM
 Dmytro
