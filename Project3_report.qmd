@@ -76,6 +76,7 @@ library(modelr) # evaluation of models
 library(splines)
 library(MASS) # for LDA
 library(pROC)
+library(factoextra)
 ggplot2::theme_set(theme_classic())
 
 extrafont::loadfonts(device = "all", quiet = TRUE)
@@ -367,6 +368,10 @@ The output of the LDA function provided several pieces of information about the 
 plot(lda_train1)
 ```
 
+```{r}
+lda_val1$posterior[,2]
+```
+
 
 ## SVM
 
@@ -375,6 +380,44 @@ Dmytro
 ## Clustering
 
 ```{r}
-GeneEx <- read.csv("~/Documents/2023_1_Lund/Statistical_learning/Project_3/GeneEx.csv", header=TRUE)
-head(GeneEx)
+gene_expressions <- read.csv("~/Documents/2023_1_Lund/Statistical_learning/Project_3/GeneEx.csv", header=TRUE)
+head(gene_expressions)
 ```
+## K-means
+
+Since the data contains gene expression values for 1000 genes, it is important to preprocess the data before clustering. One common preprocessing step is to normalize the data so that each gene has a mean of 0 and a standard deviation of 1. 
+
+```{r}
+data_norm <- scale(gene_expressions[,2:1000])
+```
+
+To perform K-Means Clustering, we need to first determine the optimal number of clusters. One way to do this is to use the elbow method. The method consists of plotting the explained variation as a function of the number of clusters and picking the elbow of the curve as the best number of clusters. 
+
+```{r}
+fviz_nbclust(data_norm, kmeans, method = "wss") + 
+  geom_vline(xintercept = 2, linetype = "dashed")
+
+```
+
+Based on the elbow plot, we can see that the optimal number of clusters is 2. 
+```{r}
+set.seed(123)
+kmeans_res <- kmeans(data_norm, centers = 2)
+
+```
+
+We can visualize the clusters using a scatter plot. Since the data has 1000 dimensions, we need to reduce the dimensionality of the data to 2 dimensions using principal component analysis (PCA) or t-SNE. Here, we will use PCA.
+
+```{r}
+pca <- prcomp(data_norm)
+data_pca <- data.frame(PC1=pca$x[,1], PC2=pca$x[,2], Cluster=kmeans_res$cluster)
+
+```
+
+```{r}
+ggplot(data_pca, aes(x=PC1, y=PC2, color=as.factor(Cluster))) + 
+  geom_point() +
+  labs(title="K-Means Clustering Results (K=2)", x="PC1", y="PC2") +
+  theme_bw()
+```
+
