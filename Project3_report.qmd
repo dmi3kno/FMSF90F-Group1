@@ -48,6 +48,9 @@ format:
 fig-height: 5
 fig-width: 7
 fig-align: "center"
+editor: 
+  markdown: 
+    wrap: 72
 ---
 
 ```{r setup, message=FALSE}
@@ -72,6 +75,7 @@ library(rsample) # for cross-validation
 library(modelr) # evaluation of models
 library(splines)
 library(MASS) # for LDA
+library(pROC)
 ggplot2::theme_set(theme_classic())
 
 extrafont::loadfonts(device = "all", quiet = TRUE)
@@ -107,21 +111,32 @@ write_csv(bigfoot, "data/bigfoot.csv")
 
 ```
 
-
 # Regression and tree-based models
 
 ## Introduction
 
 ### Data description
 
-The Bigfoot Field Researchers Organization (BFRO) is an organization dedicated to investigating the bigfoot mystery, and for years they have been collecting reported sightings in a database. They manually classify their reports into
+The Bigfoot Field Researchers Organization (BFRO) is an organization
+dedicated to investigating the bigfoot mystery, and for years they have
+been collecting reported sightings in a database. They manually classify
+their reports into
 
-- Class A: Clear sightings in circumstances where misinterpretation or misidentification of other animals can be ruled out with greater confidence
-- Class B: Incidents where a possible bigfoot was observed at a great distance or in poor lighting conditions and incidents in any other circumstance that did not afford a clear view of the subject.
+-   Class A: Clear sightings in circumstances where misinterpretation or
+    misidentification of other animals can be ruled out with greater
+    confidence
+-   Class B: Incidents where a possible bigfoot was observed at a great
+    distance or in poor lighting conditions and incidents in any other
+    circumstance that did not afford a clear view of the subject.
 
-However, they wonder if this can be automated and done by a classification algorithm instead. So in this task, you will set up a few different classification algorithms for this aim, and evaluate their performance.
+However, they wonder if this can be automated and done by a
+classification algorithm instead. So in this task, you will set up a few
+different classification algorithms for this aim, and evaluate their
+performance.
 
-In this task we are using a slightly simplified version of the data set where we have extracted some variables of interest and deleted observations that are missing any of these variables of interest.
+In this task we are using a slightly simplified version of the data set
+where we have extracted some variables of interest and deleted
+observations that are missing any of these variables of interest.
 
 ```{r}
 #| echo: true
@@ -130,17 +145,30 @@ bigfoot <- read_csv("data/bigfoot.csv", show_col_types = FALSE) %>%
 ```
 
 ```{r}
-
 set.seed(42)
 train_idx <- sample(1:nrow(bigfoot), nrow(bigfoot)*0.7)
 test_idx <- (-train_idx)
-
 bigfoot %>% summary()
 ```
 
-
 ## Logistic regression
-Zaide 
+
+Logistic regression is a popular and widely used statistical technique
+that is particularly suitable for binary classification problems, where
+the response variable is dichotomous (e.g., yes/no, true/false, 1/0). In
+this case, the response variable is whether a bigfoot sighting can be
+classified as Class A or Class B. The classification of the class is
+based on the values of one or more predictor variables. These predictor
+variables can include any number of factors that might be relevant to
+the classification, such as the location of the sighting, the time of
+day, or the weather conditions.
+
+Overall, logistic regression is a useful and appropriate tool for
+analyzing this type of data set, as it allows us to model the
+relationship between predictor variables and a binary response variable,
+and to make predictions about the probability of the response variable
+taking on one of two possible values.
+
 ```{r}
 log_reg_bf <- glm(class ~ ., 
                 data = bigfoot,
@@ -148,19 +176,205 @@ log_reg_bf <- glm(class ~ .,
 summary(log_reg_bf)
 ```
 
+The predictor variables, latitude, furTRUE, howlTRUE, sawTRUE, and
+heardTRUE were all statistically significant. In particular, for every
+one-unit increase in latitude, the log odds of a sighting being
+classified as "Class A" increases by 0.027594, and the log odds decrease
+by 0.487222 if the sighting involved fur (furTRUE=1). Likewise, the log
+odds increase by 0.804664 if the sighting involved howling (howlTRUE=1),
+and decrease by 1.288882 and 1.111468 if the sighting involved seeing
+(sawTRUE=1) or hearing (heardTRUE=1) a bigfoot, respectively.
 
+## LASSO
 
+Now, for improving the interpretability of the logistic regression
+model, we performed a LASSO selection to identify or reduce the number
+of the predictors that contribute the most to explain the model.
 
+```{r}
+library(glmnet)
 
+x=model.matrix(class~.,data=bigfoot[train_idx,])[,-1]
+y=bigfoot$class[train_idx]
 
-## Random Forest
-Zaide
+```
+
+```{r}
+lasso.cv <- cv.glmnet(x,y, alpha=1, family = "binomial")
+lasso.cv
+```
+
+```{r}
+#| label: fig-lasso-plot1
+#| out-width: 80%
+#| fig-cap: A graph of the LASSO model coeffcients for different lambdas.
+plot(lasso.cv)
+```
+
+In the \@fig-lasso-plot1 the dashed lines are the ln(𝜆) values
+corresponding to the 𝜆𝑚𝑖𝑛 (left dashed line) and 𝜆1𝑠𝑒 (right dashed
+line).
+
+```{r}
+lasso.cv$lambda.1se
+
+```
+
+The lambda value of $\lambda=0.02439122$ is the penalty parameter that
+is used in LASSO to control the degree of shrinkage applied to the
+coefficients. A smaller lambda value results in less shrinkage and a
+larger lambda value results in more shrinkage.
+
+```{r}
+lasso.fit <- glmnet(x,y,alpha=1,family = "binomial",lambda=lasso.cv$lambda.1se)
+coef(lasso.fit)
+```
+
+Regarding the LASSO coefficients, the variables longitude and visibility
+with a coefficient of "." are the ones that have been shrunk to zero by
+the LASSO regularization, indicating that they have been excluded from
+the final model.
+
+```{r}
+xval=model.matrix(class~.,data=bigfoot[test_idx,])[,-1]
+                
+validation_preds_lasso <- predict(lasso.fit, newx = xval, type = "response")
+validation_classifier_lasso <- ifelse(validation_preds_lasso <= 0.5, "Class A", "Class B")
+
+```
+
+Then, to evaluate the performance of a binary classification model like
+logistic regression we built a confusion matrix to assess how well the
+model was able to classify observations into their correct categories
+(Class A or Class B in this case).
+
+```{r}
+# Confussion matrix
+table(validation_classifier_lasso,bigfoot$class[test_idx],
+      dnn = c("predicted","observed" )) %>% addmargins()
+```
+
+form Table 1. 312 cases were predicted to be Class A and were actually
+Class A (the top-left cell), while 143 cases were predicted to be Class
+B but were actually Class A (the bottom-left cell). The diagonal cells
+of the table (top-left to bottom-right) represent the number of cases
+that were correctly classified (True positive). In this case, 312 + 289
+= 601 cases were correctly classified, which gives an overall accuracy
+of 601/912 = 66.04%. The off-diagonal cells represent the number of
+cases that were misclassified (False positive). For example, 168 cases
+were predicted to be Class B but were actually Class A (the top-right
+cell), while 143 cases were predicted to be Class A but were actually
+Class B (the bottom-left cell).
+
+```{r}
+
+prop.table(table( validation_classifier_lasso,bigfoot$class[test_idx],
+                 dnn =c("predicted","observed" )), margin=2) %>% round(2)
+```
+
+The percentages in the table 2 are the proportion of cases in each
+predicted-actual class combination, calculated by dividing the count in
+each cell by the total number of cases (912 in this case). For example,
+69% of cases predicted to be Class A were actually Class A (top-left
+cell), while 31% of cases predicted to be Class A were actually Class B
+(bottom-left cell).
+
+```{r}
+newdata=data.frame(longitude=-81.61756, latitude=seq(25, 65, by=1), visibility=9.5, 
+                   fur=FALSE,
+                   howl=FALSE,
+                   saw=FALSE,
+                   heard=FALSE,
+                   class=1)
+
+xnew=model.matrix(class~., data=newdata)[,-1]
+ypred=predict(lasso.fit, newx = xnew, type = "response")
+xnew<-data.frame(xnew)
+
+```
+
+```{r}
+#| label: fig-latitud-plot2
+#| out-width: 80%
+#| fig-cap:Probability of class A given the latitud. 
+xnew %>% 
+  mutate(pred_values = ypred) %>%
+  ggplot(aes(x = latitude, y = ypred)) +
+  geom_line(linewidth = 1.2) +
+  labs(y = "Probability of Class A") +
+  theme_bw() + theme(text = element_text(size = 14))  
+```
+
+Looking at the @fig-latitud-plot2, the higher the latitude, the higher
+the probability of being of the class increases up to 0.57. Finally, we
+used a ROC (Receiver Operating Characteristic) curve, a graphical
+representation of the performance of a binary classifier system as its
+discrimination threshold is varied. The ROC curve plots the true
+positive rate (TPR) against the false positive rate (FPR) for different
+classification thresholds.
+
+```{r}
+#| label: fig-latitud-plot2
+#| out-width: 80%
+#| fig-cap:Probability of class A given the latitud.
+
+logroc <- roc(bigfoot$class[test_idx],
+              validation_preds_lasso,plot=TRUE, 
+              legacy.axes = TRUE, 
+              percent =TRUE, 
+              xlab="False Positive Percentage", 
+              ylab="True Positive Percentage",
+              main="ROC curve")
+```
+
+```{r}
+auc(logroc)
+```
+
+The area under the ROC curve (AUC) is a measure of the classifier's
+performance. It represents the probability that the classifier will rank
+a randomly chosen positive instance higher than a randomly chosen
+negative instance. An AUC of 0.5 indicates that the classifier is
+performing no better than chance, while an AUC of 1.0 indicates perfect
+classification. An area under the curve equal to 73.2% indicates that
+the classifier has a moderate discriminatory power. It performs better
+than random classification, but there is still room for improvement. A
+higher AUC value, closer to 1.0, indicates better classifier
+performance.
 
 ## LDA/QDA
-We build a classifier for the `class` variable of the `bigfoot`
+
+```{r}
+set.seed(3)
+train <- sample(1:nrow(bigfoot), 0.7*nrow(bigfoot))
+train_bigfoot <- bigfoot[train,]
+validation_bigfoot <- bigfoot[-train,]
+```
+
+We fit linear discriminant analysis model to the data in `train_bigfoot`, with the response variable `class` modeled as a function of two predictor variables `latitude and fur`.
+
+```{r}
+# LDA w bill_depth_mm + flipper_length_mm 
+lda_train1 <- lda(class ~.,
+                  data = train_bigfoot)
+lda_train1
+```
+
+The output of the LDA function provided several pieces of information about the model.First, `prior probabilities of groups` (i.e., each level of the response variable). In this case, there are two classes: Class A and Class B. The prior probabilities are the proportions of the training data that belong to each class. In this case, there are slightly more observations in Class B than in Class A. Second, `group means` shows the mean values of the predictor variables for each group. Finally, the `Coefficients of linear discriminants` shows how much each predictor variable contributes to the discriminant function. Positive coefficients indicate that higher values of the predictor variable are associated with Class B, while negative coefficients indicate that higher values of the predictor variable are associated with Class A. In this case, we can see that higher values of `latitude` are associated with Class B, while higher values of `fur` are associated with Class A.
+
+
+```{r}
+plot(lda_train1)
+```
+
 
 ## SVM
+
 Dmytro
 
+## Clustering
 
-# References
+```{r}
+GeneEx <- read.csv("~/Documents/2023_1_Lund/Statistical_learning/Project_3/GeneEx.csv", header=TRUE)
+head(GeneEx)
+```
