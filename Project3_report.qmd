@@ -141,6 +141,17 @@ bigfoot %>% summary()
 
 ## Logistic regression
 Zaide 
+```{r}
+log_reg_bf <- glm(class ~ ., 
+                data = bigfoot,
+                family = "binomial")
+summary(log_reg_bf)
+```
+
+
+
+
+
 
 ## Random Forest
 Zaide
