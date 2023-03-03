@@ -53,6 +53,7 @@ fig-align: "center"
 ```{r setup, message=FALSE}
 #| message: false
 #install.packages("corrgram")
+library(MASS) # for LDA
 library(tidyverse)
 library(broom)
 library(corrgram) # visualisation of correlations
@@ -71,7 +72,7 @@ library(pls) # for principal component regression
 library(rsample) # for cross-validation
 library(modelr) # evaluation of models
 library(splines)
-library(MASS) # for LDA
+
 ggplot2::theme_set(theme_classic())
 
 extrafont::loadfonts(device = "all", quiet = TRUE)
@@ -88,7 +89,7 @@ bigfoot_original <- readr::read_csv("https://raw.githubusercontent.com/rfordatas
 
 bigfoot <- bigfoot_original %>%
 # Select the relevant covariates:
-dplyr::select(classification , observed , longitude , latitude , visibility) %>%
+select(classification , observed , longitude , latitude , visibility) %>%
 # Remove observations of class C ( second - or third hand accounts ):
 filter(classification != "Class C") %>%
 # Turn into 0/1, 1 = Class A, 0 = Class B:
@@ -134,8 +135,6 @@ bigfoot <- read_csv("data/bigfoot.csv", show_col_types = FALSE) %>%
 set.seed(42)
 train_idx <- sample(1:nrow(bigfoot), nrow(bigfoot)*0.7)
 test_idx <- (-train_idx)
-
-bigfoot %>% summary()
 ```
 
 
@@ -143,10 +142,34 @@ bigfoot %>% summary()
 Zaide 
 
 ## Random Forest
-Zaide
+
+```{r}
+rf_mod <- randomForest(class~., data=bigfoot, subset=train_idx, importance=TRUE)
+varImpPlot(rf_mod)
+```
+
 
 ## LDA/QDA
-We build a classifier for the `class` variable of the `bigfoot`
+We build a classifier for the `class` variable of the `bigfoot` dataset.
+
+```{r}
+lda_mod1 <- lda(class~saw+longitude+latitude, data=bigfoot, subset = train_idx)
+```
+
+Because this classification task includes discrimination between the two classes only, then there will be only a single set of LD values, which will separate the classes.
+
+We can now predict the class on the test (holdout) data.
+
+```{r}
+lda_pred1 <- predict(lda_mod1, newdata=bigfoot[test_idx,])
+
+table(
+  lda_pred1$class, bigfoot$class[test_idx],
+  dnn=c("predicted", "observed")
+) %>% prop.table()
+
+```
+
 
 ## SVM
 Dmytro
