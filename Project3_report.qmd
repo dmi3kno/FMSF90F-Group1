@@ -115,6 +115,21 @@ test_idx <- (-train_idx)
 #bigfoot %>% summary()
 ```
 
+In this assignment we will use the test AUC (area under the receiver operator curve) to assess the performance and compare the models. We will also calculate some classification performance metrics from the confusion matrix, which, for two-class problems shows true positives (TP), true negatives (TN), false positives (FP) and false negatives (FN). Using these totals we will compute 
+
+$$Accuracy=\frac{TP+TN}{TP+TN+FP+FN}$$
+
+$$Sensitivity=\frac{TP}{P}=\frac{TP}{TP+FN}$$
+
+Sensitivity is also called the true positive rate or recall.
+
+
+$$Specificity=\frac{TN}{N}=\frac{TN}{TN+FP}$$
+
+Specificity is sometimes called true negative rate.
+
+Note that these metrics are computed conditional on the selected cutoff. Therefore, we inspect the `pROC` object and identify the optimial cutoff for each model and then apply this cutoff to each of the class probability outputs and compute the metrics. 
+
 ## Logistic regression
 
 Logistic regression is a popular and widely used statistical technique that is particularly suitable for binary classification problems, where the response variable is dichotomous (e.g., yes/no, true/false, 1/0). In this case, the response variable is whether a bigfoot sighting can be classified as Class A or Class B. The classification of the class is based on the values of one or more predictor variables. These predictor variables can include any number of factors that might be relevant to the classification, such as the location of the sighting, the time of day, or the weather conditions.
@@ -152,10 +167,13 @@ The area under the ROC curve (AUC) is a measure of the classifier's performance.
 ```{r}
 glm_roc <- roc(bigfoot$class[test_idx],
                preds_glm)
+glm_metrics <- coords(glm_roc,"best")
 ggroc(glm_roc, legacy.axes = TRUE)+
   geom_abline(slope=1, intercept = 0, color="grey70")
+
 ```
-The AUC for the logistic regression is `r auc(glm_roc)` 
+
+The AUC for the logistic regression is `r auc(glm_roc)`. The best cutoff is at `r glm_metrics$threshold`. The sensitivity (TPR) is `r glm_metrics$sensitivity` and specificity (TNR) is `r glm_metrics$specificity`.
 
 ## LASSO regression
 
@@ -208,11 +226,12 @@ Finally, we use a ROC (Receiver Operating Characteristic) curve, a graphical rep
 #| label: fig-lasso-plot2
 #| fig-cap: ROC curve for lasso regression
 lasso_roc <- roc(bigfoot$class[test_idx],     lasso_preds)
+lasso_metrics <- coords(lasso_roc,"best")
 ggroc(lasso_roc, legacy.axes = TRUE)+
   geom_abline(slope=1, intercept = 0, color="grey70")
 ```
 
-The AUC for the tuned LASSO regression is `r auc(lasso_roc)`, which is not that much different from the logistic regression.
+The AUC for the tuned LASSO regression is `r auc(lasso_roc)`, which is not that much different from the logistic regression. The best cutoff is at `r lasso_metrics$threshold`. The sensitivity (TPR) is `r lasso_metrics$sensitivity` and specificity (TNR) is `r lasso_metrics$specificity`.
 
 
 ## LDA/QDA
@@ -237,6 +256,7 @@ table(
   dnn=c("predicted", "observed")
 ) %>% prop.table()
 ```
+
 The accuracy seem to be worse than the regressions. Let's look at the AUC
 
 ```{r}
@@ -244,11 +264,12 @@ The accuracy seem to be worse than the regressions. Let's look at the AUC
 #| fig-cap: "ROC for LDA"
 lda_roc <- roc(bigfoot$class[test_idx],
                 lda_preds)
+lda_metrics <- coords(lda_roc,"best")
 ggroc(lda_roc, legacy.axes = TRUE)+
   geom_abline(slope=1, intercept = 0, color="grey70")
 ```
 
-The AUC for LDA is a meager `r auc(lda_roc)`.
+The AUC for LDA is a meager `r auc(lda_roc)`. The best cutoff is at `r lda_metrics$threshold`. The sensitivity (TPR) is `r lda_metrics$sensitivity` and specificity (TNR) is `r lda_metrics$specificity`.
 
 ## Random Forest
 
@@ -286,21 +307,23 @@ The accuracy seems to be roughly on par with the regressions. Let's look at the 
 #| fig-cap: "ROC for Random Forest"
 rf_roc <- roc(bigfoot$class[test_idx],
                 rf_preds)
+rf_metrics <- coords(rf_roc,"best")
 ggroc(rf_roc, legacy.axes = TRUE)+
   geom_abline(slope=1, intercept = 0, color="grey70")
 ```
 
-The AUC for the random forest model is `r auc(rf_roc)`
+The AUC for the random forest model is `r auc(rf_roc)`. The best cutoff is at `r rf_metrics$threshold`. The sensitivity (TPR) is `r rf_metrics$sensitivity` and specificity (TNR) is `r rf_metrics$specificity`.
 
 ## SVM
 
 We start with linear kernel
 
+
 ```{r}
 svm_lin <- svm(class ~ ., data = bigfoot, subset=train_idx,
-              kernel = "linear", cost = .01, scale = FALSE)
-svm_lin_preds <- attributes(
-  predict(svm_lin, newdata=bigfoot[test_idx,], decision.values = TRUE))$decision.values
+              kernel = "linear", cost = .01, scale = FALSE, probability=TRUE)
+svm_lin_preds <- attr(predict(svm_lin, newdata=bigfoot[test_idx,],  
+                              probability=TRUE), "probabilities")[,"Class A"]
 ```
 
 ```{r}
@@ -309,19 +332,20 @@ svm_lin_preds <- attributes(
 lin_roc <- roc(
    as.numeric(bigfoot$class[test_idx]),
    as.vector(svm_lin_preds))
+svmlin_metrics <- coords(lin_roc,"best")
 
 ggroc(lda_roc, legacy.axes = TRUE)+
   geom_abline(slope=1, intercept = 0, color="grey70")
 ```
-The AUC for the linear-kernel SVM `r auc(lin_roc)`
+The AUC for the linear-kernel SVM `r auc(lin_roc)`. The best cutoff is at `r svmlin_metrics$threshold`. The sensitivity (TPR) is `r svmlin_metrics$sensitivity` and specificity (TNR) is `r svmlin_metrics$specificity`.
 
 Let's try radial kernel
 
 ```{r}
-svm_rad <- svm(class ~ ., data = bigfoot, subset=train_idx,
+svm_rad <- svm(class ~ ., data = bigfoot, subset=train_idx, probability=TRUE,
               kernel = "radial", gamma=0.01, cost = .01, scale = FALSE)
-svm_rad_preds <- attributes(
-  predict(svm_lin, newdata=bigfoot[test_idx,], decision.values = TRUE))$decision.values
+svm_rad_preds <- attr(predict(svm_rad, newdata=bigfoot[test_idx,],  
+                              probability=TRUE), "probabilities")[,"Class A"]
 ```
 
 ```{r}
@@ -330,18 +354,22 @@ svm_rad_preds <- attributes(
 svm_rad_roc <- roc(
    as.numeric(bigfoot$class[test_idx]),
    as.vector(svm_lin_preds))
+svm_rad_metrics <- coords(svm_rad_roc,"best")
 
 ggroc(svm_rad_roc, legacy.axes = TRUE)+
   geom_abline(slope=1, intercept = 0, color="grey70")
 ```
-The AUC for the radial-kernel SVM `r auc(svm_rad_roc)`. We can tune the SVM parameters (both `gamma` and `cost`).
+
+The AUC for the radial-kernel SVM `r auc(svm_rad_roc)`. The best cutoff is at `r svm_rad_metrics$threshold`. The sensitivity (TPR) is `r svm_rad_metrics$sensitivity` and specificity (TNR) is `r svm_rad_metrics$specificity`.
+
+We can tune the SVM parameters (both `gamma` and `cost`).
 
 ```{r}
 set.seed(42)
 svm_rad_tune <- tune("svm",
                  class~.,
                  data=bigfoot[train_idx, ],
-                 kernel="radial",
+                 kernel="radial", probability=TRUE,
                  ranges = list(
                    cost = c(0.01, 0.05, 0.1, 0.5, 1),
                    gamma = c(0.01, 0.05, 0.1, 0.5, 1)),
@@ -350,8 +378,8 @@ svm_bestrad_mod <- svm_rad_tune$best.model
 ```
 
 ```{r}
-svm_bestrad_preds <- attributes(
-  predict(svm_bestrad_mod, newdata=bigfoot[test_idx,], decision.values = TRUE))$decision.values
+svm_bestrad_preds <- attr(predict(svm_bestrad_mod, newdata=bigfoot[test_idx,], 
+                                  probability=TRUE), "probabilities")[,"Class A"]
 ```
 
 ```{r}
@@ -360,14 +388,43 @@ svm_bestrad_preds <- attributes(
 svm_bestrad_roc <- roc(
    as.numeric(bigfoot$class[test_idx]),
    as.vector(svm_bestrad_preds))
-
+svm_bestrad_metrics <- coords(svm_bestrad_roc,"best")
 ggroc(svm_bestrad_roc, legacy.axes = TRUE)+
   geom_abline(slope=1, intercept = 0, color="grey70")
 ```
 
-The AUC for the tuned radial SVM is `r auc(svm_bestrad_roc)`
+The AUC for the tuned radial SVM is `r auc(svm_bestrad_roc)`. The best cutoff is at `r svm_bestrad_metrics$threshold`. The sensitivity (TPR) is `r svm_bestrad_metrics$sensitivity` and specificity (TNR) is `r svm_bestrad_metrics$specificity`.
 
-## Clustering
+## Conclusion
+
+In this section we considered several classification algorithms. The summary of the performance measured on the test set is provided in @tbl-auc-results. Based on AUC, the best performing algorithm is the Random Forest, which after tuning showed the AUC of `r auc(rf_roc)`, beating both SVM and the linear model. Therefore we pick Random Forest as out model of choice for the Bigfoot prediction challenge.
+
+```{r}
+#| label: tbl-auc-results
+#| tbl-cap: "Test AUC for Bigfoot example per model"
+#| echo: false
+tibble::tibble(
+  model=c("GLM", "LASSO", "LDA",
+          "RF", "SVM linear", "SVM radial",
+          "SVM radial tuned"),
+  AUC=c(GLM=auc(glm_roc), Lasso=auc(lasso_roc), LDA=auc(lda_roc),
+        RF=auc(rf_roc), SVMlin=auc(lin_roc), SVMrad=auc(svm_rad_roc),
+        SVMtunedrad=auc(svm_bestrad_roc)),
+  Cutoff=c(glm_metrics$threshold, lasso_metrics$threshold, lda_metrics$threshold,
+           rf_metrics$threshold, svmlin_metrics$threshold, svm_rad_metrics$threshold,
+           svm_bestrad_metrics$threshold),
+  Sensitivity=c(glm_metrics$sensitivity, lasso_metrics$sensitivity, lda_metrics$sensitivity,
+           rf_metrics$sensitivity, svmlin_metrics$sensitivity, svm_rad_metrics$sensitivity,
+           svm_bestrad_metrics$sensitivity),
+  Specificity=c(glm_metrics$specificity, lasso_metrics$specificity, lda_metrics$specificity,
+           rf_metrics$specificity, svmlin_metrics$specificity, svm_rad_metrics$specificity,
+           svm_bestrad_metrics$specificity)
+) %>% 
+  kableExtra::kbl(booktabs =TRUE, digits = 3) 
+```
+
+
+# Clustering
 
 The GeneEx.csv data contains gene-expressions for 1000 genes for 40 samples. The 20 first
 samples come from healthy patients (controls) while the 20 last come from a diseased group (cases). The gene expression of 1000 different genes are collected in the 1000 columns (named ”G1” to ”G1000”).
